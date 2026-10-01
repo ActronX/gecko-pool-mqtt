@@ -394,47 +394,6 @@ for solar power: its Node-RED flow switches a consumer on only when the forecast
 covers the runtime without draining the home battery below a reserved level.
 Point it at `gecko/cmd/heatPump` and the heat pump runs on solar surplus.
 
-## Gecko Library and API Version
-
-`requirements.txt` pins `gecko-iot-client==1.0.3`. This is the latest version
-published on PyPI (published 2026-06-02), so the pin is current. The package
-requires Python `>=3.13`; the `Dockerfile` therefore uses `python:3.13-slim`.
-
-However, the published package description is **not** reliable and differs from
-the shipped 1.0.3 code:
-
-- The PyPI README describes the library as an "asynchronous Python client
-  library" and shows `await light.activate()` and
-  `MqttTransporter(endpoint=..., device_id=...)`.
-- The bridge deliberately uses the **synchronous** API generation in 1.0.3:
-  `MqttTransporter(broker_url=..., monitor_id=..., token_refresh_callback=...)`
-  and blocking zone methods.
-
-This bridge targets the 1.0.3 implementation, not the examples in the PyPI
-README. API surface used:
-
-| Area | API used in 1.0.3 |
-|---|---|
-| Connection | `GeckoIotClient(idd=..., transporter=..., config_timeout=...)`, blocking `connect()` / `disconnect()` |
-| Zone lookup | `get_zone_by_id_and_type(ZoneType..., zone_id)`, `get_zones()` |
-| Zone mutation | `FlowZone.activate()` / `deactivate()` / `set_speed()`, `LightingZone.set_color()` / `set_effect()`, `TemperatureControlZone.set_target_temperature()` |
-| Events | `client.on(EventChannel.ZONE_UPDATE / CONNECTIVITY_UPDATE / OPERATION_MODE_UPDATE, cb)` |
-
-Important behavior in this API generation: the zone methods
-`activate()`, `deactivate()`, `set_speed()`, `set_color()`, `set_effect()` and
-`set_target_temperature()` are **blocking**. They wait internally for up to five
-seconds for the broker's PUBACK confirmation. Do not call them directly on the
-asyncio event loop.
-
-The bridge therefore calls each mutation through `await asyncio.to_thread(...)`.
-The call blocks a worker thread instead of the event loop; MQTT, the watchdog,
-and status publishes continue in the meantime. Read-only accesses such as
-`client.is_connected`, `zone.active`, `zone.initiators` and
-`get_zone_by_id_and_type()` remain on the event loop.
-
-The published project documentation is available at
-<https://geckoal.github.io/gecko-iot-client/>. Check it against the 1.0.3 API
-listed above before using code examples from it.
 
 ## OAuth Login over MQTT
 
@@ -1033,6 +992,48 @@ from changing accidentally, `gecko-iot-client` should remain pinned to exactly
 1.0.3 and be checked against the API list under
 [Gecko library and API version](#gecko-library-and-api-version) before any
 change.
+
+### Gecko Library and API Version
+
+`requirements.txt` pins `gecko-iot-client==1.0.3`. This is the latest version
+published on PyPI (published 2026-06-02), so the pin is current. The package
+requires Python `>=3.13`; the `Dockerfile` therefore uses `python:3.13-slim`.
+
+However, the published package description is **not** reliable and differs from
+the shipped 1.0.3 code:
+
+- The PyPI README describes the library as an "asynchronous Python client
+  library" and shows `await light.activate()` and
+  `MqttTransporter(endpoint=..., device_id=...)`.
+- The bridge deliberately uses the **synchronous** API generation in 1.0.3:
+  `MqttTransporter(broker_url=..., monitor_id=..., token_refresh_callback=...)`
+  and blocking zone methods.
+
+This bridge targets the 1.0.3 implementation, not the examples in the PyPI
+README. API surface used:
+
+| Area | API used in 1.0.3 |
+|---|---|
+| Connection | `GeckoIotClient(idd=..., transporter=..., config_timeout=...)`, blocking `connect()` / `disconnect()` |
+| Zone lookup | `get_zone_by_id_and_type(ZoneType..., zone_id)`, `get_zones()` |
+| Zone mutation | `FlowZone.activate()` / `deactivate()` / `set_speed()`, `LightingZone.set_color()` / `set_effect()`, `TemperatureControlZone.set_target_temperature()` |
+| Events | `client.on(EventChannel.ZONE_UPDATE / CONNECTIVITY_UPDATE / OPERATION_MODE_UPDATE, cb)` |
+
+Important behavior in this API generation: the zone methods
+`activate()`, `deactivate()`, `set_speed()`, `set_color()`, `set_effect()` and
+`set_target_temperature()` are **blocking**. They wait internally for up to five
+seconds for the broker's PUBACK confirmation. Do not call them directly on the
+asyncio event loop.
+
+The bridge therefore calls each mutation through `await asyncio.to_thread(...)`.
+The call blocks a worker thread instead of the event loop; MQTT, the watchdog,
+and status publishes continue in the meantime. Read-only accesses such as
+`client.is_connected`, `zone.active`, `zone.initiators` and
+`get_zone_by_id_and_type()` remain on the event loop.
+
+The published project documentation is available at
+<https://geckoal.github.io/gecko-iot-client/>. Check it against the 1.0.3 API
+listed above before using code examples from it.
 
 Two additional packages are used for testing; they are listed in `requirements-dev.txt`
 and do not belong in the runtime image: `pytest` and `pytest-asyncio`. They are
