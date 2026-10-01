@@ -383,6 +383,9 @@ The reassert counter is reset on `active: true`, `action: off`, expiration of
 the request, or a new request. An emergency stop terminates the current
 request; a later `action: on` starts a new count.
 
+The complete state machine, status payloads, and error transitions are in
+[`heatpump_sm.md`](heatpump_sm.md).
+
 ### Switching on Solar Surplus
 
 `gecko/cmd/heatPump` is a plain MQTT command, so anything that can publish can
@@ -390,9 +393,6 @@ trigger it. [FusionForecast](https://github.com/ActronX/fusionForecast) does tha
 for solar power: its Node-RED flow switches a consumer on only when the forecast
 covers the runtime without draining the home battery below a reserved level.
 Point it at `gecko/cmd/heatPump` and the heat pump runs on solar surplus.
-
-The complete state machine, status payloads, and error transitions are in
-[`heatpump_sm.md`](heatpump_sm.md).
 
 ## Gecko Library and API Version
 
