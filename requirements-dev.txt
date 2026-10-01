@@ -1,0 +1,12 @@
+# Test and development dependencies.
+#
+# Prerequisite: the runtime dependencies from requirements.txt must also be
+# installed. gecko-iot-client requires Python >= 3.13, the Dockerfile uses
+# python:3.13-slim.
+#
+#   python -m pip install -r requirements.txt -r requirements-dev.txt
+#
+# Note: the tests import the gecko-iot-client library but do not test it. All
+# Gecko calls go against the fakes in tests/fakes.py.
+pytest>=8.0
+pytest-asyncio>=0.23

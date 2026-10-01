@@ -1,0 +1,10 @@
+.env
+/data
+/mqtt-trace
+tokens.json
+tokens.json.tmp
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage

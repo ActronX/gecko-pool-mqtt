@@ -1,0 +1,30 @@
+# Broker and test execution for integration tests.
+#
+#   run_tests.bat docker          both in the container
+#   run_tests.bat docker unit     unit tests only in the container
+#
+# Manually:
+#   docker compose -f docker-compose.test.yml up -d mqtt-test
+#   docker compose -f docker-compose.test.yml run --rm tests
+#   docker compose -f docker-compose.test.yml down
+#
+# The broker is test infrastructure only. It shares no volume or tokens with
+# the service from docker-compose.yml.
+services:
+  mqtt-test:
+    image: eclipse-mosquitto:2
+    container_name: geeko-mqtt-test-broker
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+    ports:
+      - "1883:1883"
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      MQTT_TEST_HOST: mqtt-test
+      MQTT_TEST_PORT: "1883"
+    depends_on:
+      - mqtt-test
+    command: ["python", "-m", "pytest"]

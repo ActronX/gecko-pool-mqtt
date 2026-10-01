@@ -1,0 +1,15 @@
+# Normalize line endings: files are maintained in the Windows editor and
+# tested in the Linux container. Without this rule, switching between them
+# creates a diff flood across all files.
+* text=auto eol=lf
+
+# Batch files need CRLF to run reliably on Windows.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Do not touch binary files.
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary

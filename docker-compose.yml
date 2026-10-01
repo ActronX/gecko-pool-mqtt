@@ -1,0 +1,16 @@
+services:
+  gecko-mqtt:
+    build: .
+    container_name: geeko-pool-mqtt
+    env_file:
+      - .env
+    volumes:
+      - gecko-tokens:/data
+      # Capture local MQTT messages. Without this mount, the files remain in the
+      # container writable layer and are only reachable from Windows via
+      # `docker cp`.
+      - ./mqtt-trace:/tmp/mqtt
+    restart: unless-stopped
+
+volumes:
+  gecko-tokens:
