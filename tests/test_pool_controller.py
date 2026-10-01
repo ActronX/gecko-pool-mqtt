@@ -423,7 +423,7 @@ async def test_tc_cm_01_missing_client_fails(pool: PoolHarness) -> None:
 
 
 async def test_tc_cm_02_temperature_command(pool: PoolHarness) -> None:
-    """R-CM-02: Temperatur setzt den Zielwert."""
+    """R-CM-02: A temperature command sets the target value."""
     zone = pool.add_zone(FakeZone("zone-1"), ZoneType.TEMPERATURE_CONTROL_ZONE)
 
     await pool.controller._handle_command("temperature", "zone-1", {"target_temperature": 28.0})
@@ -576,6 +576,68 @@ def test_tc_cm_08_missing_code_raises(payload) -> None:
     """R-CM-08: Without a code and a complete URL, an error is raised."""
     with pytest.raises(ValueError):
         PoolController._extract_callback_values(payload)
+
+
+# --------------------------------------------------------------------------
+# R-MQ-11 Invalid auth response
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("payload", ["", "   ", "\n"])
+def test_tc_mq_11_empty_auth_response_is_ignored(pool: PoolHarness, payload: str) -> None:
+    """R-MQ-11: An empty auth response is ignored instead of failing the session.
+
+    Production finding: an empty payload on `auth/response` was parsed as a
+    login attempt without a code, and the bridge answered `login_required` even
+    though the tokens were valid. That answer then stuck, because nothing
+    republishes the auth status outside a connect.
+    """
+    pool.controller.authenticated = True
+
+    pool.controller.handle_auth_response(payload)
+
+    assert pool.mqtt.auth_status == []
+    assert pool.mqtt.challenges == []
+    assert pool.controller.authenticated is True
+
+
+def test_tc_mq_11_invalid_response_keeps_valid_session_authenticated(pool: PoolHarness) -> None:
+    """R-MQ-11: An invalid response does not downgrade a valid session.
+
+    A garbage payload is a diagnostic event, not a login request. Reporting
+    `login_required` would contradict `connectivity`, which still reports
+    `authenticated`.
+    """
+    pool.controller.authenticated = True
+
+    pool.controller.handle_auth_response("https://example.test/redirect?state=only")
+
+    assert pool.controller.authenticated is True
+    status = pool.mqtt.auth_status[-1]
+    assert status["status"] == "authenticated"
+    assert "invalid response ignored" in status["reason"]
+
+
+def test_tc_mq_11_invalid_response_without_session_reports_login_required(
+    pool: PoolHarness,
+) -> None:
+    """R-MQ-11: Without a valid session an invalid response reports login_required."""
+    pool.controller.authenticated = False
+
+    pool.controller.handle_auth_response("https://example.test/redirect?state=only")
+
+    status = pool.mqtt.auth_status[-1]
+    assert status["status"] == "login_required"
+    assert "No OAuth code" in status["reason"]
+
+
+def test_tc_mq_11_reason_is_truncated(pool: PoolHarness) -> None:
+    """R-MQ-11: The reason stays within the documented 240 characters."""
+    pool.controller.authenticated = True
+
+    pool.controller.handle_auth_response("https://example.test/redirect?state=" + "x" * 400)
+
+    assert len(pool.mqtt.auth_status[-1]["reason"]) <= 240
 
 
 # --------------------------------------------------------------------------

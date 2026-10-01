@@ -213,11 +213,19 @@ All topics start with `gecko/` by default. With a different
 |---|---|---:|---|
 | `gecko/auth/status` | Bridge → Broker | Yes | JSON with `status` and `reason` |
 | `gecko/auth/challenge` | Bridge → Broker | Yes | JSON with `authorize_url`, `state`, `instructions` |
-| `gecko/auth/response` | Broker → Bridge | No | Redirect URL or JSON code/state |
+| `gecko/auth/response` | Broker → Bridge | No | Redirect URL or JSON code/state. An empty payload is ignored, it does not attempt a login |
 | `gecko/auth/login` | Broker → Bridge | No | Any payload; creates a new challenge |
 
 Possible auth status values are `login_required`, `authenticating`,
 `authenticated`, and `reauth_required`.
+
+An invalid `auth/response` reports `login_required` only while no valid session
+exists. With a valid session the status stays `authenticated` and the reason
+carries the diagnostic, so `auth/status` cannot contradict
+`gecko/status/connectivity`. Note that `auth/status` is written only on
+transitions: after a restart it reads `authenticated` only once the connection
+has been established, and it is not revised during an outage. Use
+`connectivity` as the connection indicator.
 
 ### Status
 

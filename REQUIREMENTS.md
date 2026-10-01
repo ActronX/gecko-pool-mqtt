@@ -104,7 +104,7 @@ Quelle: `app/mqtt_bridge.py`.
 | R-MQ-08 | `flow` requires `action` in `{on,off}` and a numeric `speed`; `bool` is rejected. | TC-MQ-08-01, TC-MQ-08-02 |
 | R-MQ-09 | An unknown `command_type` produces an error result. | TC-MQ-09-01 |
 | R-MQ-10 | `heatPump` requires `action` in `{on,off}`; `duration` must be numeric, integral, and greater than zero. | TC-MQ-10-01, TC-MQ-10-02 |
-| R-MQ-11 | Invalid payloads produce an error result on the matching result topic and do not stop the service. Command acknowledgements and the `reassert` and `error` events are not retained; the challenge is deleted as an empty retained message. | TC-MQ-11-01, TC-MQ-16-01 bis TC-MQ-16-03, TC-INT-03-01 |
+| R-MQ-11 | Invalid payloads produce an error result on the matching result topic and do not stop the service. Command acknowledgements and the `reassert` and `error` events are not retained; the challenge is deleted as an empty retained message. An empty `auth/response` is ignored, because it deletes the topic rather than attempting a login. An invalid `auth/response` reports `login_required` only when no valid session exists; otherwise it keeps `authenticated` and carries the reason, so the topic cannot contradict `connectivity`. | TC-MQ-11-01 bis TC-MQ-11-06, TC-MQ-16-01 bis TC-MQ-16-03, TC-INT-03-01 |
 | R-MQ-12 | `publish()` returns `MQTTMessageInfo`; when `rc != SUCCESS`, it returns `None` and logs a warning. Dictionaries are serialized compactly, and strings are sent unchanged. | TC-MQ-12-01 bis TC-MQ-12-04 |
 | R-MQ-13 | `stop()` confirms retained `offline` before `disconnect()`. | TC-MQ-13-01, TC-INT-05-01 |
 | R-MQ-14 | `stop()` calls `disconnect()` and `loop_stop()` even after a timeout, publish exception, or failed publish. | TC-MQ-14-01 bis TC-MQ-14-03 |
@@ -351,6 +351,8 @@ seconds.
   during an outage even though the connection is gone. If the connection
   recovers by itself, the auth status remains unchanged. Use
   `gecko/status/connectivity` as the connection indicator. See R-GE-11 and R-GE-12.
+  The opposite direction is covered: an invalid `auth/response` no longer
+  downgrades a valid session to `login_required` (R-MQ-11).
 - **`bool` is accepted for lighting colors.** The check for `r`, `g`, `b`, and
   `intensity` in `_validate_command` does not reject `bool`, so `true` is taken as
   `1`. For `flow`, `bool` is explicitly rejected for `speed`. The checks are

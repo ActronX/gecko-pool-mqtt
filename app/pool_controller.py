@@ -250,13 +250,28 @@ class PoolController:
         asyncio.run_coroutine_threadsafe(coroutine, self.loop)
 
     def handle_auth_response(self, payload: str) -> None:
+        text = payload.strip()
+        if not text:
+            # An empty message deletes the topic, it is not a login attempt.
+            # Reported as an error it would stick the status on
+            # `login_required` even though the session is valid.
+            logger.debug("Ignoring empty OAuth response")
+            return
         try:
-            data = json.loads(payload) if payload.strip().startswith("{") else {"redirect_url": payload.strip()}
+            data = json.loads(text) if text.startswith("{") else {"redirect_url": text}
             code, state = self._extract_callback_values(data)
             self._schedule(self._complete_oauth_safe(code, state))
         except Exception as exc:
             logger.error("Invalid OAuth response: %s", exc)
-            self.mqtt.publish_auth_status({"status": "login_required", "reason": str(exc)})
+            # Only a genuinely missing session may report `login_required`.
+            # Otherwise the topic contradicts the real state and stays wrong
+            # until the next connect.
+            if self.authenticated:
+                self.mqtt.publish_auth_status(
+                    {"status": "authenticated", "reason": f"invalid response ignored: {exc}"[:240]}
+                )
+            else:
+                self.mqtt.publish_auth_status({"status": "login_required", "reason": str(exc)})
 
     async def _complete_oauth_safe(self, code: str, state: str | None) -> None:
         self.mqtt.publish_auth_status({"status": "authenticating", "reason": ""})

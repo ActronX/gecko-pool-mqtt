@@ -1,6 +1,6 @@
 """Integration tests against a real MQTT broker (TC-INT-01 through TC-INT-06).
 
-Voraussetzung::
+Prerequisite::
 
     docker compose -f docker-compose.test.yml up -d
     pytest -m integration
