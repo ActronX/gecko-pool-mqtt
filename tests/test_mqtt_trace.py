@@ -20,33 +20,33 @@ from app.mqtt_trace import MqttTrace
 TAG = datetime(2026, 9, 30, 11, 40, 23, 934774, tzinfo=timezone.utc)
 
 
-class Uhr:
+class Clock:
     """Injected clock that the test advances as needed."""
 
     def __init__(self, start: datetime) -> None:
-        self.jetzt = start
+        self.now = start
 
     def __call__(self) -> datetime:
-        return self.jetzt
+        return self.now
 
-    def springe(self, tage: int = 0, stunden: int = 0) -> None:
-        self.jetzt += timedelta(days=tage, hours=stunden)
+    def advance(self, days: int = 0, hours: int = 0) -> None:
+        self.now += timedelta(days=days, hours=hours)
 
 
-def trace_in(tmp_path: Path, uhr: Uhr | None = None, retention_days: int = 7) -> tuple[MqttTrace, Path]:
+def trace_in(tmp_path: Path, clock: Clock | None = None, retention_days: int = 7) -> tuple[MqttTrace, Path]:
     """Creates a trace in the temporary directory and returns it with its path."""
-    ziel = tmp_path / "mqtt-trace"
-    return MqttTrace(str(ziel), retention_days, now=uhr or Uhr(TAG)), ziel
+    target = tmp_path / "mqtt-trace"
+    return MqttTrace(str(target), retention_days, now=clock or Clock(TAG)), target
 
 
-def zeilen(ziel: Path) -> list[dict[str, Any]]:
+def read_entries(target: Path) -> list[dict[str, Any]]:
     """Reads all daily files and returns entries in storage order."""
-    eintraege: list[dict[str, Any]] = []
-    for datei in sorted(ziel.glob("mqtt-*.jsonl")):
-        for zeile in datei.read_text(encoding="utf-8").splitlines():
-            if zeile.strip():
-                eintraege.append(json.loads(zeile))
-    return eintraege
+    entries: list[dict[str, Any]] = []
+    for day_file in sorted(target.glob("mqtt-*.jsonl")):
+        for line in day_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                entries.append(json.loads(line))
+    return entries
 
 
 # --------------------------------------------------------------------------
@@ -56,67 +56,67 @@ def zeilen(ziel: Path) -> list[dict[str, Any]]:
 
 def test_tc_tr_01_01_outgoing_record_carries_qos_and_retain(tmp_path: Path) -> None:
     """R-TR-01: Outgoing messages carry dir, topic, payload, qos, and retain."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("out", "geeko/status/heatPump/state", '{"state":"running"}', qos=1, retain=True)
+    trace.record("out", "gecko/status/heatPump/state", '{"state":"running"}', qos=1, retain=True)
 
-    eintrag = zeilen(ziel)[0]
-    assert eintrag["dir"] == "out"
-    assert eintrag["topic"] == "geeko/status/heatPump/state"
-    assert eintrag["payload"] == '{"state":"running"}'
-    assert eintrag["qos"] == 1
-    assert eintrag["retain"] is True
-    assert eintrag["ts"].endswith("+00:00")
+    entry = read_entries(target)[0]
+    assert entry["dir"] == "out"
+    assert entry["topic"] == "gecko/status/heatPump/state"
+    assert entry["payload"] == '{"state":"running"}'
+    assert entry["qos"] == 1
+    assert entry["retain"] is True
+    assert entry["ts"].endswith("+00:00")
 
 
 def test_tc_tr_01_02_incoming_record_has_no_qos_or_retain(tmp_path: Path) -> None:
     """R-TR-01: Incoming messages have no qos or retain."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("in", "geeko/cmd/heatPump", '{"action":"on"}')
+    trace.record("in", "gecko/cmd/heatPump", '{"action":"on"}')
 
-    eintrag = zeilen(ziel)[0]
-    assert eintrag["dir"] == "in"
-    assert eintrag["topic"] == "geeko/cmd/heatPump"
-    assert eintrag["payload"] == '{"action":"on"}'
-    assert "qos" not in eintrag
-    assert "retain" not in eintrag
+    entry = read_entries(target)[0]
+    assert entry["dir"] == "in"
+    assert entry["topic"] == "gecko/cmd/heatPump"
+    assert entry["payload"] == '{"action":"on"}'
+    assert "qos" not in entry
+    assert "retain" not in entry
 
 
 def test_tc_tr_01_03_timestamp_is_utc(tmp_path: Path) -> None:
     """R-TR-01: The timestamp includes the UTC offset."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("out", "geeko/status/availability", "online")
+    trace.record("out", "gecko/status/availability", "online")
 
-    assert zeilen(ziel)[0]["ts"] == "2026-09-30T11:40:23.934774+00:00"
+    assert read_entries(target)[0]["ts"] == "2026-09-30T11:40:23.934774+00:00"
 
 
 def test_tc_tr_01_04_one_line_per_message_keeps_order(tmp_path: Path) -> None:
     """R-TR-01: Each message occupies one line and order is preserved."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("in", "geeko/cmd/heatPump", '{"action":"on"}')
-    trace.record("out", "geeko/cmd/heatPump/result", '{"success":true}', qos=1, retain=False)
-    trace.record("out", "geeko/status/heatPump/state", '{"state":"running"}', qos=1, retain=True)
+    trace.record("in", "gecko/cmd/heatPump", '{"action":"on"}')
+    trace.record("out", "gecko/cmd/heatPump/result", '{"success":true}', qos=1, retain=False)
+    trace.record("out", "gecko/status/heatPump/state", '{"state":"running"}', qos=1, retain=True)
 
-    datei = ziel / "mqtt-2026-09-30.jsonl"
-    roh = datei.read_text(encoding="utf-8").splitlines()
-    assert len(roh) == 3
-    assert [eintrag["topic"] for eintrag in zeilen(ziel)] == [
-        "geeko/cmd/heatPump",
-        "geeko/cmd/heatPump/result",
-        "geeko/status/heatPump/state",
+    day_file = target / "mqtt-2026-09-30.jsonl"
+    raw = day_file.read_text(encoding="utf-8").splitlines()
+    assert len(raw) == 3
+    assert [entry["topic"] for entry in read_entries(target)] == [
+        "gecko/cmd/heatPump",
+        "gecko/cmd/heatPump/result",
+        "gecko/status/heatPump/state",
     ]
 
 
 def test_tc_tr_01_05_empty_payload_is_kept(tmp_path: Path) -> None:
     """R-TR-01: An empty payload is recorded as an empty payload."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("in", "geeko/auth/login", "")
+    trace.record("in", "gecko/auth/login", "")
 
-    assert zeilen(ziel)[0]["payload"] == ""
+    assert read_entries(target)[0]["payload"] == ""
 
 
 # --------------------------------------------------------------------------
@@ -126,26 +126,26 @@ def test_tc_tr_01_05_empty_payload_is_kept(tmp_path: Path) -> None:
 
 def test_tc_tr_01_06_day_change_opens_a_new_file(tmp_path: Path) -> None:
     """R-TR-02: After midnight UTC, the next line goes into the new file."""
-    uhr = Uhr(TAG)
-    trace, ziel = trace_in(tmp_path, uhr)
+    clock = Clock(TAG)
+    trace, target = trace_in(tmp_path, clock)
 
-    trace.record("out", "geeko/status/heatPump/state", "a", qos=1, retain=True)
-    uhr.springe(tage=1)
-    trace.record("out", "geeko/status/heatPump/state", "b", qos=1, retain=True)
+    trace.record("out", "gecko/status/heatPump/state", "a", qos=1, retain=True)
+    clock.advance(days=1)
+    trace.record("out", "gecko/status/heatPump/state", "b", qos=1, retain=True)
 
-    assert (ziel / "mqtt-2026-09-30.jsonl").read_text(encoding="utf-8").count("\n") == 1
-    assert (ziel / "mqtt-2026-10-01.jsonl").read_text(encoding="utf-8").count("\n") == 1
-    assert [eintrag["payload"] for eintrag in zeilen(ziel)] == ["a", "b"]
+    assert (target / "mqtt-2026-09-30.jsonl").read_text(encoding="utf-8").count("\n") == 1
+    assert (target / "mqtt-2026-10-01.jsonl").read_text(encoding="utf-8").count("\n") == 1
+    assert [entry["payload"] for entry in read_entries(target)] == ["a", "b"]
 
 
 def test_tc_tr_01_07_day_file_follows_the_utc_date(tmp_path: Path) -> None:
     """R-TR-02: The daily file follows the clock's UTC date."""
-    uhr = Uhr(datetime(2026, 9, 30, 23, 30, tzinfo=timezone.utc))
-    trace, ziel = trace_in(tmp_path, uhr)
+    clock = Clock(datetime(2026, 9, 30, 23, 30, tzinfo=timezone.utc))
+    trace, target = trace_in(tmp_path, clock)
 
-    trace.record("out", "geeko/status/heatPump/state", "a", qos=1, retain=True)
+    trace.record("out", "gecko/status/heatPump/state", "a", qos=1, retain=True)
 
-    assert (ziel / "mqtt-2026-09-30.jsonl").exists()
+    assert (target / "mqtt-2026-09-30.jsonl").exists()
 
 
 # --------------------------------------------------------------------------
@@ -155,9 +155,9 @@ def test_tc_tr_01_07_day_file_follows_the_utc_date(tmp_path: Path) -> None:
 
 def test_tc_tr_01_08_retention_removes_files_beyond_the_window(tmp_path: Path) -> None:
     """R-TR-03: Files older than retention are deleted."""
-    uhr = Uhr(TAG)
-    trace, ziel = trace_in(tmp_path, uhr, retention_days=7)
-    ziel.mkdir(parents=True, exist_ok=True)
+    clock = Clock(TAG)
+    trace, target = trace_in(tmp_path, clock, retention_days=7)
+    target.mkdir(parents=True, exist_ok=True)
     for name in (
         "mqtt-2026-09-01.jsonl",
         "mqtt-2026-09-22.jsonl",
@@ -165,11 +165,11 @@ def test_tc_tr_01_08_retention_removes_files_beyond_the_window(tmp_path: Path) -
         "mqtt-2026-09-30.jsonl",
         "notiz.txt",
     ):
-        (ziel / name).write_text("{}\n", encoding="utf-8")
+        (target / name).write_text("{}\n", encoding="utf-8")
 
-    trace.record("out", "geeko/status/availability", "online")
+    trace.record("out", "gecko/status/availability", "online")
 
-    assert sorted(datei.name for datei in ziel.iterdir()) == [
+    assert sorted(day_file.name for day_file in target.iterdir()) == [
         "mqtt-2026-09-23.jsonl",
         "mqtt-2026-09-30.jsonl",
         "notiz.txt",
@@ -178,33 +178,33 @@ def test_tc_tr_01_08_retention_removes_files_beyond_the_window(tmp_path: Path) -
 
 def test_tc_tr_01_09_retention_runs_on_every_day_change(tmp_path: Path) -> None:
     """R-TR-03: Retention also applies on a day change."""
-    uhr = Uhr(TAG)
-    trace, ziel = trace_in(tmp_path, uhr, retention_days=1)
-    ziel.mkdir(parents=True, exist_ok=True)
-    (ziel / "mqtt-2026-09-29.jsonl").write_text("{}\n", encoding="utf-8")
+    clock = Clock(TAG)
+    trace, target = trace_in(tmp_path, clock, retention_days=1)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "mqtt-2026-09-29.jsonl").write_text("{}\n", encoding="utf-8")
 
-    trace.record("out", "geeko/status/availability", "online")
-    assert (ziel / "mqtt-2026-09-29.jsonl").exists()
+    trace.record("out", "gecko/status/availability", "online")
+    assert (target / "mqtt-2026-09-29.jsonl").exists()
 
-    uhr.springe(tage=1)
-    trace.record("out", "geeko/status/availability", "online")
+    clock.advance(days=1)
+    trace.record("out", "gecko/status/availability", "online")
 
-    assert not (ziel / "mqtt-2026-09-29.jsonl").exists()
+    assert not (target / "mqtt-2026-09-29.jsonl").exists()
 
 
 def test_tc_tr_01_10_zero_retention_keeps_every_file(tmp_path: Path) -> None:
     """R-TR-03: Retention 0 keeps all daily files."""
-    uhr = Uhr(TAG)
-    trace, ziel = trace_in(tmp_path, uhr, retention_days=0)
-    ziel.mkdir(parents=True, exist_ok=True)
-    (ziel / "mqtt-2020-01-01.jsonl").write_text("{}\n", encoding="utf-8")
+    clock = Clock(TAG)
+    trace, target = trace_in(tmp_path, clock, retention_days=0)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "mqtt-2020-01-01.jsonl").write_text("{}\n", encoding="utf-8")
 
-    trace.record("out", "geeko/status/availability", "online")
-    uhr.springe(tage=1)
-    trace.record("out", "geeko/status/availability", "online")
+    trace.record("out", "gecko/status/availability", "online")
+    clock.advance(days=1)
+    trace.record("out", "gecko/status/availability", "online")
 
-    assert (ziel / "mqtt-2020-01-01.jsonl").exists()
-    assert len(list(ziel.glob("mqtt-*.jsonl"))) == 3
+    assert (target / "mqtt-2020-01-01.jsonl").exists()
+    assert len(list(target.glob("mqtt-*.jsonl"))) == 3
 
 
 # --------------------------------------------------------------------------
@@ -212,23 +212,23 @@ def test_tc_tr_01_10_zero_retention_keeps_every_file(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("wert", ["", "   ", "off", "OFF", "Off"])
-def test_tc_tr_01_11_disabled_writes_nothing(tmp_path: Path, wert: str) -> None:
+@pytest.mark.parametrize("value", ["", "   ", "off", "OFF", "Off"])
+def test_tc_tr_01_11_disabled_writes_nothing(tmp_path: Path, value: str) -> None:
     """R-TR-04: Empty or off disables the trace without creating a file."""
-    ziel = tmp_path / "mqtt-trace"
-    trace = MqttTrace(wert, 7, now=Uhr(TAG))
+    target = tmp_path / "mqtt-trace"
+    trace = MqttTrace(value, 7, now=Clock(TAG))
 
-    trace.record("out", "geeko/status/availability", "online", qos=1, retain=True)
+    trace.record("out", "gecko/status/availability", "online", qos=1, retain=True)
     trace.close()
 
-    assert not ziel.exists()
+    assert not target.exists()
 
 
 def test_tc_tr_01_12_none_disables_the_trace(tmp_path: Path) -> None:
     """R-TR-04: None also disables the trace."""
-    trace = MqttTrace(None, 7, now=Uhr(TAG))
+    trace = MqttTrace(None, 7, now=Clock(TAG))
 
-    trace.record("out", "geeko/status/availability", "online", qos=1, retain=True)
+    trace.record("out", "gecko/status/availability", "online", qos=1, retain=True)
     trace.close()
 
     assert list(tmp_path.iterdir()) == []
@@ -241,28 +241,28 @@ def test_tc_tr_01_12_none_disables_the_trace(tmp_path: Path) -> None:
 
 def test_tc_tr_01_13_auth_response_payload_is_redacted(tmp_path: Path) -> None:
     """R-TR-05: The OAuth code from auth/response is not stored in plain text."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("in", "geeko/auth/response", "https://app.test/redirect?code=SECRET&state=abc")
+    trace.record("in", "gecko/auth/response", "https://app.test/redirect?code=SECRET&state=abc")
 
-    eintrag = zeilen(ziel)[0]
-    assert eintrag["topic"] == "geeko/auth/response"
-    assert eintrag["payload"] == "<redacted>"
-    assert eintrag["bytes"] == len("https://app.test/redirect?code=SECRET&state=abc")
-    assert "SECRET" not in (ziel / "mqtt-2026-09-30.jsonl").read_text(encoding="utf-8")
+    entry = read_entries(target)[0]
+    assert entry["topic"] == "gecko/auth/response"
+    assert entry["payload"] == "<redacted>"
+    assert entry["bytes"] == len("https://app.test/redirect?code=SECRET&state=abc")
+    assert "SECRET" not in (target / "mqtt-2026-09-30.jsonl").read_text(encoding="utf-8")
 
 
 def test_tc_tr_01_14_other_topics_stay_readable(tmp_path: Path) -> None:
     """R-TR-05: Only auth/response is redacted."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("out", "geeko/auth/challenge", '{"authorize_url":"https://x.test/a?state=s1"}')
-    trace.record("out", "geeko/status/heatPump/reassert", '{"reason":"zone reported inactive"}')
+    trace.record("out", "gecko/auth/challenge", '{"authorize_url":"https://x.test/a?state=s1"}')
+    trace.record("out", "gecko/status/heatPump/reassert", '{"reason":"zone reported inactive"}')
 
-    nutzlasten = [eintrag["payload"] for eintrag in zeilen(ziel)]
-    assert "state=s1" in nutzlasten[0]
-    assert "zone reported inactive" in nutzlasten[1]
-    assert all("bytes" not in eintrag for eintrag in zeilen(ziel))
+    payloads = [entry["payload"] for entry in read_entries(target)]
+    assert "state=s1" in payloads[0]
+    assert "zone reported inactive" in payloads[1]
+    assert all("bytes" not in entry for entry in read_entries(target))
 
 
 # --------------------------------------------------------------------------
@@ -272,17 +272,17 @@ def test_tc_tr_01_14_other_topics_stay_readable(tmp_path: Path) -> None:
 
 def test_tc_tr_01_15_write_error_never_raises(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """R-TR-06: An uncreatable directory absorbs the error."""
-    blockierer = tmp_path / "blocker"
-    blockierer.write_text("not a directory\n", encoding="utf-8")
-    trace = MqttTrace(str(blockierer / "mqtt-trace"), 7, now=Uhr(TAG))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory\n", encoding="utf-8")
+    trace = MqttTrace(str(blocker / "mqtt-trace"), 7, now=Clock(TAG))
 
     with caplog.at_level("WARNING"):
-        trace.record("out", "geeko/status/availability", "online", qos=1, retain=True)
-        trace.record("in", "geeko/cmd/heatPump", '{"action":"on"}')
+        trace.record("out", "gecko/status/availability", "online", qos=1, retain=True)
+        trace.record("in", "gecko/cmd/heatPump", '{"action":"on"}')
     trace.close()
 
-    assert blockierer.read_text(encoding="utf-8") == "not a directory\n"
-    warnungen = [eintrag for eintrag in caplog.records if eintrag.levelname == "WARNING"]
+    assert blocker.read_text(encoding="utf-8") == "not a directory\n"
+    warnungen = [entry for entry in caplog.records if entry.levelname == "WARNING"]
     assert len(warnungen) == 1, "The error was reported multiple times"
 
 
@@ -294,38 +294,38 @@ def test_tc_tr_01_16_unwritable_file_does_not_break_publishing(
     Directory creation can succeed at startup while appending later fails, for
     example when the disk is full.
     """
-    ziel = tmp_path / "mqtt-trace"
-    ziel.mkdir(parents=True, exist_ok=True)
-    (ziel / "mqtt-2026-09-30.jsonl").mkdir()
-    trace = MqttTrace(str(ziel), 7, now=Uhr(TAG))
+    target = tmp_path / "mqtt-trace"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "mqtt-2026-09-30.jsonl").mkdir()
+    trace = MqttTrace(str(target), 7, now=Clock(TAG))
 
     with caplog.at_level("WARNING"):
-        trace.record("out", "geeko/status/availability", "online", qos=1, retain=True)
+        trace.record("out", "gecko/status/availability", "online", qos=1, retain=True)
 
-    assert (ziel / "mqtt-2026-09-30.jsonl").is_dir()
+    assert (target / "mqtt-2026-09-30.jsonl").is_dir()
 
 
 def test_tc_tr_01_17_record_after_close_reopens_the_file(tmp_path: Path) -> None:
     """R-TR-02: After `close`, the trace writes to the daily file again."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("out", "geeko/status/availability", "online")
+    trace.record("out", "gecko/status/availability", "online")
     trace.close()
-    trace.record("out", "geeko/status/availability", "online")
+    trace.record("out", "gecko/status/availability", "online")
     trace.close()
 
-    assert len(zeilen(ziel)) == 2
+    assert len(read_entries(target)) == 2
 
 
 def test_tc_tr_01_18_close_is_idempotent(tmp_path: Path) -> None:
     """R-TR-02: Repeated `close` is allowed and writes nothing extra."""
-    trace, ziel = trace_in(tmp_path)
+    trace, target = trace_in(tmp_path)
 
-    trace.record("out", "geeko/status/availability", "online")
+    trace.record("out", "gecko/status/availability", "online")
     trace.close()
     trace.close()
 
-    assert len(zeilen(ziel)) == 1
+    assert len(read_entries(target)) == 1
 
 
 # --------------------------------------------------------------------------
@@ -338,35 +338,35 @@ def test_tc_tr_01_19_concurrent_records_produce_intact_lines(tmp_path: Path) -> 
 
     `_on_message` runs in the paho thread, and `publish` runs in the event-loop thread.
     """
-    trace, ziel = trace_in(tmp_path)
-    spur: list[threading.Thread] = []
-    erwartet: list[str] = []
-    for nummer in range(4):
-        erwartet.extend(f'{{"n":{nummer * 100 + index}}}' for index in range(25))
+    trace, target = trace_in(tmp_path)
+    track: list[threading.Thread] = []
+    expected: list[str] = []
+    for number in range(4):
+        expected.extend(f'{{"n":{number * 100 + index}}}' for index in range(25))
 
-        def schreibe(nummer: int = nummer) -> None:
+        def write_records(number: int = number) -> None:
             for index in range(25):
-                trace.record("out", "geeko/status/heatPump/state", f'{{"n":{nummer * 100 + index}}}', qos=1, retain=True)
+                trace.record("out", "gecko/status/heatPump/state", f'{{"n":{number * 100 + index}}}', qos=1, retain=True)
 
-        thread = threading.Thread(target=schreibe)
-        spur.append(thread)
+        thread = threading.Thread(target=write_records)
+        track.append(thread)
         thread.start()
-    for thread in spur:
+    for thread in track:
         thread.join()
 
-    datei = ziel / "mqtt-2026-09-30.jsonl"
-    roh = datei.read_text(encoding="utf-8").splitlines()
-    assert len(roh) == 100
-    assert all(isinstance(json.loads(zeile), dict) for zeile in roh)
-    assert sorted(json.loads(zeile)["payload"] for zeile in roh) == sorted(erwartet)
+    day_file = target / "mqtt-2026-09-30.jsonl"
+    raw = day_file.read_text(encoding="utf-8").splitlines()
+    assert len(raw) == 100
+    assert all(isinstance(json.loads(line), dict) for line in raw)
+    assert sorted(json.loads(line)["payload"] for line in raw) == sorted(expected)
 
 
 def test_tc_tr_01_20_directory_is_created_on_demand(tmp_path: Path) -> None:
     """R-TR-07: The target directory is created on initialization."""
-    ziel = tmp_path / "tief" / "mqtt-trace"
+    target = tmp_path / "deep" / "mqtt-trace"
 
-    trace = MqttTrace(str(ziel), 7, now=Uhr(TAG))
-    trace.record("out", "geeko/status/availability", "online")
+    trace = MqttTrace(str(target), 7, now=Clock(TAG))
+    trace.record("out", "gecko/status/availability", "online")
     trace.close()
 
-    assert os.path.isdir(ziel)
+    assert os.path.isdir(target)

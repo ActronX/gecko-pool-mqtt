@@ -212,7 +212,7 @@ class MqttBridge:
         self.publish("auth/challenge", {
             "authorize_url": authorize_url,
             "state": state,
-            "instructions": "Open authorize_url, complete login, then publish the full redirect URL to geeko/auth/response.",
+            "instructions": "Open authorize_url, complete login, then publish the full redirect URL to gecko/auth/response.",
         })
 
     def clear_challenge(self) -> None:

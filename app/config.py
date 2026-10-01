@@ -46,10 +46,10 @@ class Settings:
     # --- Local MQTT ---
     mqtt_host: str = field(default_factory=lambda: os.getenv("MQTT_HOST", "mqtt.example.com"))
     mqtt_port: int = field(default_factory=lambda: int(os.getenv("MQTT_PORT", "1883")))
-    mqtt_base_topic: str = field(default_factory=lambda: os.getenv("MQTT_BASE_TOPIC", "geeko"))
+    mqtt_base_topic: str = field(default_factory=lambda: os.getenv("MQTT_BASE_TOPIC", "gecko"))
     mqtt_username: str = field(default_factory=lambda: os.getenv("MQTT_USERNAME", ""))
     mqtt_password: str = field(default_factory=lambda: os.getenv("MQTT_PASSWORD", ""))
-    mqtt_client_id: str = field(default_factory=lambda: os.getenv("MQTT_CLIENT_ID", "geeko-pool-mqtt"))
+    mqtt_client_id: str = field(default_factory=lambda: os.getenv("MQTT_CLIENT_ID", "gecko-pool-mqtt"))
     mqtt_shutdown_publish_timeout: float = field(default_factory=lambda: float(os.getenv("MQTT_SHUTDOWN_PUBLISH_TIMEOUT", "2.0")))
     #: Trace of all local MQTT messages as JSONL, one file per UTC day. Empty or
     #: "off" disables it.

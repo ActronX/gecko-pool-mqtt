@@ -3,11 +3,11 @@
 The ``gecko-iot-client`` library is **not** tested by these fakes. They only
 mirror the signatures that ``app/`` actually uses:
 
-* ``GeckoIotClient`` mit ``connect`` / ``disconnect`` / ``is_connected`` /
+* ``GeckoIotClient`` with ``connect`` / ``disconnect`` / ``is_connected`` /
   ``get_zone_by_id_and_type`` / ``get_zones`` / ``on`` / ``emit``
-* Zonenobjekte mit ``activate``, ``deactivate``, ``set_speed``,
-  ``set_color``, ``set_effect`` und ``set_target_temperature``
-* ``MQTTMessageInfo`` mit ``wait_for_publish`` und ``is_published``
+* zone objects with ``activate``, ``deactivate``, ``set_speed``,
+  ``set_color``, ``set_effect`` and ``set_target_temperature``
+* ``MQTTMessageInfo`` with ``wait_for_publish`` and ``is_published``
 
 In the real library, zone methods are synchronous and block for up to five
 seconds waiting for PUBACK confirmation. The fakes reproduce this behavior
@@ -320,7 +320,7 @@ class FakePahoClient:
         self.disconnected = False
         self.loop_stopped = False
         self.next_message_info: FakeMqttMessageInfo | None = None
-        # Callback-Attribute, die MqttBridge belegt
+        # Callback attributes that MqttBridge assigns
         self.on_connect: Callable[..., Any] | None = None
         self.on_disconnect: Callable[..., Any] | None = None
         self.on_message: Callable[..., Any] | None = None
@@ -397,7 +397,7 @@ class FakePahoClient:
 class FakeMqttBridge:
     """Records all controller publications."""
 
-    def __init__(self, base: str = "geeko") -> None:
+    def __init__(self, base: str = "gecko") -> None:
         self.base = base
         self.heat_pump_results: list[dict[str, Any]] = []
         self.heat_pump_states: list[dict[str, Any]] = []

@@ -116,7 +116,7 @@ async def test_tc_ge_01_connect_runs_in_daemon_thread(pool: PoolHarness, library
 
     assert await pool.controller.start_gecko_client() is True
 
-    assert RecordingGeckoClient.connect_threads, "connect wurde nie aufgerufen"
+    assert RecordingGeckoClient.connect_threads, "connect was never called"
     record = RecordingGeckoClient.connect_threads[0]
     assert record["daemon"] is True
     assert record["is_main_thread"] is False
@@ -266,7 +266,7 @@ async def test_tc_ge_06_oauth_error_during_autostart_marks_reauth(pool: PoolHarn
 
 
 async def test_tc_ge_07_reauth_is_idempotent(pool: PoolHarness) -> None:
-    """R-GE-07: Wiederholte Reauth-Ausloesung veraendert den Zustand nur einmal."""
+    """R-GE-07: A repeated reauth trigger changes the state only once."""
     pool.controller.oauth_flow = FakeOAuthFlow()
     generation_before = pool.controller._connect_generation
 
@@ -522,13 +522,13 @@ async def test_tc_cm_06_unknown_command_type_fails(pool: PoolHarness) -> None:
 async def test_tc_cm_07_gecko_exception_becomes_error_result(pool: PoolHarness) -> None:
     """R-CM-07: A library exception is reported as an error."""
     zone = pool.add_zone(FakeZone("1"), ZoneType.FLOW_ZONE)
-    zone.fail("activate", RuntimeError("PUBACK fehlt"))
+    zone.fail("activate", RuntimeError("PUBACK missing"))
 
     await pool.controller._handle_command("flow", "1", {"action": "on"})
 
     result = pool.mqtt.results[-1]
     assert result["success"] is False
-    assert "PUBACK fehlt" in result["message"]
+    assert "PUBACK missing" in result["message"]
 
 
 async def test_tc_cm_07_unknown_zone_becomes_error_result(pool: PoolHarness) -> None:

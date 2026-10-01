@@ -26,7 +26,7 @@ class _RequestInfo:
     url = "https://api.test/v2/user/user-1"
 
 
-def client_error(status: int, message: str = "fehler") -> aiohttp.ClientResponseError:
+def client_error(status: int, message: str = "error") -> aiohttp.ClientResponseError:
     return aiohttp.ClientResponseError(
         _RequestInfo(), (), status=status, message=message
     )
@@ -45,7 +45,7 @@ def api_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def fake_async_request(self, method, path, **kwargs) -> Any:
         recorded["requests"].append((method, path))
         if path not in recorded["responses"]:
-            raise AssertionError(f"Unerwarteter API-Aufruf: {method} {path}")
+            raise AssertionError(f"Unexpected API call: {method} {path}")
         value = recorded["responses"][path]
         if isinstance(value, BaseException):
             raise value
@@ -231,7 +231,7 @@ async def test_tc_api_04_non_dict_livestream_raises(
 
 
 # --------------------------------------------------------------------------
-# R-API-05 Refresh-Callback aus einem Library-Thread
+# R-API-05 Refresh callback from a library thread
 # --------------------------------------------------------------------------
 
 

@@ -13,7 +13,7 @@
 services:
   mqtt-test:
     image: eclipse-mosquitto:2
-    container_name: geeko-mqtt-test-broker
+    container_name: gecko-mqtt-test-broker
     command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
     ports:
       - "1883:1883"

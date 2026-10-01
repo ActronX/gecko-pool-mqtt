@@ -1,4 +1,4 @@
-# geeko-pool-mqtt
+# gecko-pool-mqtt
 
 Standalone Python bridge between a Gecko in.touch 3 pool controller and a local
 MQTT broker.
@@ -7,7 +7,7 @@ The service uses `gecko-iot-client` to connect to the Gecko cloud and exposes th
 data locally through a second, independent MQTT client:
 
 - Gecko cloud: the library's internal AWS IoT MQTT connection
-- Local broker: MQTT connection to `MQTT_HOST` under the `geeko/` topic prefix
+- Local broker: MQTT connection to `MQTT_HOST` under the `gecko/` topic prefix
 
 There is no HTTP, FastAPI, or Node-RED interface.
 
@@ -72,24 +72,40 @@ Important settings in `.env`:
 
 | Variable | Default | Description |
 |---|---:|---|
-| `MQTT_HOST` | `mqtt.example.com` | Hostname des lokalen Brokers |
-| `MQTT_PORT` | `1883` | Port des lokalen Brokers |
-| `MQTT_BASE_TOPIC` | `geeko` | Prefix for all bridge topics |
-| `MQTT_CLIENT_ID` | `geeko-pool-mqtt` | MQTT Client-ID |
+| `MQTT_HOST` | `mqtt.example.com` | Hostname of the local broker |
+| `MQTT_PORT` | `1883` | Port of the local broker |
+| `MQTT_BASE_TOPIC` | `gecko` | Prefix for all bridge topics |
+| `MQTT_CLIENT_ID` | `gecko-pool-mqtt` | MQTT client ID |
 | `MQTT_SHUTDOWN_PUBLISH_TIMEOUT` | `2.0` | Time to wait during shutdown until retained `offline` is confirmed |
-| `MQTT_USERNAME` | leer | Optional username |
-| `MQTT_PASSWORD` | leer | Optional password |
-| `OAUTH_TOKEN_FILE` | `/data/tokens.json` | Persistenter Token-Pfad |
-| `GECKO_ACCOUNT_ID` | leer | Optional: skip account discovery |
-| `GECKO_MONITOR_ID` | leer | Optional: force vessel selection |
-| `GECKO_CONFIG_TIMEOUT` | `30.0` | Timeout for Gecko configuration |
-| `GECKO_HEAT_PUMP_FLOW_ZONE_ID` | `4` | Flow zone ID of the pump for external heat pumps |
+| `MQTT_USERNAME` | empty | Optional username |
+| `MQTT_PASSWORD` | empty | Optional password |
+| `OAUTH_TOKEN_FILE` | `/data/tokens.json` | Persistent token path |
+| `GECKO_ACCOUNT_ID` | empty | Optional: skip account discovery |
+| `GECKO_MONITOR_ID` | empty | Optional: force vessel selection |
+| `GECKO_CONFIG_TIMEOUT` | `30.0` | Timeout for the Gecko configuration |
+| `GECKO_HEAT_PUMP_FLOW_ZONE_ID` | `4` | Flow zone ID of the pump used for external heat pumps |
 | `GECKO_HEAT_PUMP_DEFAULT_DURATION` | `30` | Default runtime of the heat-pump request in minutes |
-| `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` | `2` | Maximum failed reassert attempts before emergency stop; `0` = unlimited |
+| `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` | `2` | Maximum failed reassert attempts before the emergency stop; `0` = unlimited |
 | `GECKO_HEAT_PUMP_CHECK_INTERVAL` | `5.0` | Heat-pump watchdog check interval in seconds |
-| `GECKO_HEAT_PUMP_CONFIRM_TIMEOUT` | `15.0` | Maximum wait for activation confirmation in seconds |
-| `MQTT_SHUTDOWN_PUBLISH_TIMEOUT` | `2.0` | Time to wait during shutdown until retained `offline` is confirmed |
+| `GECKO_HEAT_PUMP_CONFIRM_TIMEOUT` | `15.0` | Maximum wait for the activation confirmation in seconds |
 | `LOG_LEVEL` | `INFO` | Python log level |
+
+### Migrating from the former topic prefix
+
+The default base topic changed from `geeko` to `gecko`, so that the published
+topics match the spelling of the manufacturer. This breaks an installation that
+is already running. Two ways to deal with it:
+
+- **Move the subscriptions.** Change every MQTT subscription and automation from
+  `geeko/…` to `gecko/…`. Home Assistant's MQTT integration lists each topic in
+  its discovery payload, so the new entities appear on their own after the
+  bridge restarts. The old retained messages stay on the broker as leftovers.
+- **Keep the old topics.** Set `MQTT_BASE_TOPIC=geeko` in `.env` and nothing
+  else moves. Note that an explicit entry in `.env` always wins over the default
+  in `app/config.py`.
+
+Trace files written before the rename still contain `geeko/…` topics and are no
+longer directly comparable with new ones. The file names are unaffected.
 
 The registered OAuth redirect URL is:
 `https://my.home-assistant.io/redirect/oauth`.
@@ -144,7 +160,7 @@ running external MQTT broker and does not start its own broker.
 Check status:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t "geeko/#" -v
+mosquitto_sub -h mqtt.example.com -t "gecko/#" -v
 ```
 
 ## OAuth Login over MQTT
@@ -152,17 +168,17 @@ mosquitto_sub -h mqtt.example.com -t "geeko/#" -v
 The PKCE login requires a running process because the code verifier and
 state are kept only in memory.
 
-1. Start the service and wait for `geeko/auth/challenge`.
+1. Start the service and wait for `gecko/auth/challenge`.
 2. Open the `authorize_url` value from the retained challenge in a browser.
 3. Log in to Gecko.
 4. After the redirect, copy the complete URL from the browser address bar.
-5. Send the URL to `geeko/auth/response`:
+5. Send the URL to `gecko/auth/response`:
 
 ```text
-mosquitto_pub -h mqtt.example.com -t geeko/auth/response -m "https://my.home-assistant.io/redirect/_change/?redirect=oauth%2F%3Fcode%3D...%26state%3D..."
+mosquitto_pub -h mqtt.example.com -t gecko/auth/response -m "https://my.home-assistant.io/redirect/_change/?redirect=oauth%2F%3Fcode%3D...%26state%3D..."
 ```
 
-Alternatively, `geeko/auth/response` accepts JSON:
+Alternatively, `gecko/auth/response` accepts JSON:
 
 ```json
 {"redirect_url":"https://my.home-assistant.io/redirect/oauth?code=...&state=..."}
@@ -176,29 +192,29 @@ Or directly:
 
 After successful login:
 
-- `geeko/auth/status` becomes `{"status":"authenticated",...}`
-- `geeko/auth/challenge` is deleted as an empty retained message
+- `gecko/auth/status` becomes `{"status":"authenticated",...}`
+- `gecko/auth/challenge` is deleted as an empty retained message
 - Zone and connectivity statuses are published
 
 A new login challenge can be requested at any time:
 
 ```text
-mosquitto_pub -h mqtt.example.com -t geeko/auth/login -m ""
+mosquitto_pub -h mqtt.example.com -t gecko/auth/login -m ""
 ```
 
 ## MQTT Topics
 
-All topics start with `geeko/` by default. With a different
+All topics start with `gecko/` by default. With a different
 `MQTT_BASE_TOPIC`, replace this prefix accordingly.
 
 ### Authentication
 
 | Topic | Direction | Retained | Payload |
 |---|---|---:|---|
-| `geeko/auth/status` | Bridge → Broker | Yes | JSON with `status` and `reason` |
-| `geeko/auth/challenge` | Bridge → Broker | Yes | JSON with `authorize_url`, `state`, `instructions` |
-| `geeko/auth/response` | Broker → Bridge | No | Redirect URL or JSON code/state |
-| `geeko/auth/login` | Broker → Bridge | No | Any payload; creates a new challenge |
+| `gecko/auth/status` | Bridge → Broker | Yes | JSON with `status` and `reason` |
+| `gecko/auth/challenge` | Bridge → Broker | Yes | JSON with `authorize_url`, `state`, `instructions` |
+| `gecko/auth/response` | Broker → Bridge | No | Redirect URL or JSON code/state |
+| `gecko/auth/login` | Broker → Bridge | No | Any payload; creates a new challenge |
 
 Possible auth status values are `login_required`, `authenticating`,
 `authenticated`, and `reauth_required`.
@@ -209,14 +225,14 @@ Status messages are JSON and are published retained.
 
 | Topic | Payload |
 |---|---|
-| `geeko/status/availability` | `online` or `offline` |
-| `geeko/status/connectivity` | Gecko connectivity data plus auth fields |
-| `geeko/status/operation_mode` | Current Watercare/Operation mode |
-| `geeko/status/zone/temperature/<zone_id>` | Temperature zone with current and target value |
-| `geeko/status/zone/lighting/<zone_id>` | Lighting zone with activity, color, and effect |
-| `geeko/status/zone/flow/<zone_id>` | Flow zone with activity, speed, run reason, and presets |
-| `geeko/status/zones` | Complete snapshot by zone type |
-| `geeko/status/heatPump/state` | Heat pump request state |
+| `gecko/status/availability` | `online` or `offline` |
+| `gecko/status/connectivity` | Gecko connectivity data plus auth fields |
+| `gecko/status/operation_mode` | Current Watercare/Operation mode |
+| `gecko/status/zone/temperature/<zone_id>` | Temperature zone with current and target value |
+| `gecko/status/zone/lighting/<zone_id>` | Lighting zone with activity, color, and effect |
+| `gecko/status/zone/flow/<zone_id>` | Flow zone with activity, speed, run reason, and presets |
+| `gecko/status/zones` | Complete snapshot by zone type |
+| `gecko/status/heatPump/state` | Heat pump request state |
 
 Example of a temperature zone:
 
@@ -236,7 +252,7 @@ Example of a temperature zone:
 }
 ```
 
-Example of `geeko/status/heatPump/state`:
+Example of `gecko/status/heatPump/state`:
 
 ```json
 {
@@ -261,7 +277,7 @@ Example of `geeko/status/heatPump/state`:
 | `timestamp` | UTC timestamp of publication |
 
 Units: `remaining_seconds` is in seconds, while the `duration` field of the
-`geeko/cmd/heatPump` command and `GECKO_HEAT_PUMP_DEFAULT_DURATION` are in
+`gecko/cmd/heatPump` command and `GECKO_HEAT_PUMP_DEFAULT_DURATION` are in
 **minutes**. For `disarmed`, `error`, and `disarmed_expired`,
 `remaining_seconds` is `null`.
 
@@ -285,8 +301,8 @@ The state transitions and error cases are
 described in
 [`heatpump_sm.md`](heatpump_sm.md).
 
-The two heat pump events `geeko/status/heatPump/reassert` and
-`geeko/status/heatPump/error`, by contrast, are **not** retained and are
+The two heat pump events `gecko/status/heatPump/reassert` and
+`gecko/status/heatPump/error`, by contrast, are **not** retained and are
 therefore not included in this table.
 
 ### Pump Run Reason
@@ -370,14 +386,14 @@ codes are labeled `unknown:<code>`.
 
 ### Commands
 
-Commands are sent as JSON to `geeko/cmd/+/+/set`. For each command, the bridge
+Commands are sent as JSON to `gecko/cmd/+/+/set`. For each command, the bridge
 publishes a response under
-`geeko/cmd/<type>/<zone_id>/result`.
+`gecko/cmd/<type>/<zone_id>/result`.
 
 Temperature:
 
 ```text
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/temperature/zone-1/set -m '{"target_temperature":28.0}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/temperature/zone-1/set -m '{"target_temperature":28.0}'
 ```
 
 Turn lighting on:
@@ -429,13 +445,13 @@ The zone ID is not necessarily included in the display name. First list the flow
 zones:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t 'geeko/status/zone/flow/+' -v
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/+' -v
 ```
 
 Alternatively, subscribe to the complete snapshot:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t geeko/status/zones -v
+mosquitto_sub -h mqtt.example.com -t gecko/status/zones -v
 ```
 
 If the fourth pump has ID `4`, it can be turned on at a fixed speed
@@ -443,7 +459,7 @@ of 50 percent:
 
 ```text
 mosquitto_pub -h mqtt.example.com \
-  -t geeko/cmd/flow/4/set \
+  -t gecko/cmd/flow/4/set \
   -m '{"action":"on","speed":50}'
 ```
 
@@ -451,33 +467,33 @@ In Windows PowerShell, run the command on one line because `\` is not a
 line-continuation character there:
 
 ```powershell
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/flow/4/set -m '{"action":"on","speed":50}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/4/set -m '{"action":"on","speed":50}'
 ```
 
 Without specifying a speed, the pump is simply activated:
 
 ```text
 mosquitto_pub -h mqtt.example.com \
-  -t geeko/cmd/flow/4/set \
+  -t gecko/cmd/flow/4/set \
   -m '{"action":"on"}'
 ```
 
 PowerShell:
 
 ```powershell
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/flow/4/set -m '{"action":"on"}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/4/set -m '{"action":"on"}'
 ```
 
 The bridge publishes the response to:
 
 ```text
-geeko/cmd/flow/4/result
+gecko/cmd/flow/4/result
 ```
 
 To observe the ack at the same time:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t 'geeko/cmd/flow/4/result' -v
+mosquitto_sub -h mqtt.example.com -t 'gecko/cmd/flow/4/result' -v
 ```
 
 A successful result looks like this, for example:
@@ -499,7 +515,7 @@ or `CD`.
 After switching it on, check the actual status:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t 'geeko/status/zone/flow/4' -v
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/4' -v
 ```
 
 Example status with a run reason:
@@ -540,7 +556,7 @@ A pump is switched off with:
 
 ```text
 mosquitto_pub -h mqtt.example.com \
-  -t geeko/cmd/flow/4/set \
+  -t gecko/cmd/flow/4/set \
   -m '{"action":"off"}'
 ```
 
@@ -581,11 +597,11 @@ default; its ID can be changed with
 The complete state machine, status payloads, and error transitions are in
 [`heatpump_sm.md`](heatpump_sm.md).
 
-The command deliberately uses its own topic `geeko/cmd/heatPump`
+The command deliberately uses its own topic `gecko/cmd/heatPump`
 (without `/set`):
 
 ```powershell
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/heatPump -m '{"action":"on","duration":30}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"on","duration":30}'
 ```
 
 `duration` is specified in minutes. If `duration` is omitted,
@@ -599,10 +615,10 @@ again.
 A running request can be stopped immediately:
 
 ```powershell
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/heatPump -m '{"action":"off"}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"off"}'
 ```
 
-The result is published under `geeko/cmd/heatPump/result`. Example of a
+The result is published under `gecko/cmd/heatPump/result`. Example of a
 successful `on` ack:
 
 ```json
@@ -633,7 +649,7 @@ After a bridge restart, **no** heat-pump request is
 resumed. The controller starts `disarmed`, no watchdog runs, and it does not
 reconstruct anything from the cloud state. Specifically:
 
-- `geeko/status/heatPump/state` reports `disarmed` once with `armed: false`
+- `gecko/status/heatPump/state` reports `disarmed` once with `armed: false`
   and `remaining_seconds: null`.
 - Until a new `on` has been received, the controller ignores every zone update.
   Switching the pump off through the Gecko app also triggers **no** reassert,
@@ -650,9 +666,9 @@ reconstruct anything from the cloud state. Specifically:
 To verify this without waiting for the next filter cycle:
 
 ```text
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/heatPump -m '{"action":"on","duration":10}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"on","duration":10}'
 docker compose restart
-mosquitto_sub -h mqtt.example.com -t "geeko/status/heatPump/#" -v -W 20
+mosquitto_sub -h mqtt.example.com -t "gecko/status/heatPump/#" -v -W 20
 ```
 
 Exactly one `state` line with `disarmed` is expected, followed by nothing else.
@@ -663,7 +679,7 @@ Both behaviors are intentional and are deliberately not being fixed because
 each solution would introduce its own failure mode:
 
 - **Reconstruct the deadline from retained state.** Read
-  `geeko/status/heatPump/state` at startup and re-arm with the remaining
+  `gecko/status/heatPump/state` at startup and re-arm with the remaining
   `remaining_seconds` when `armed: true`. No additional file is needed, but this
   survives only while the retained topic is not deleted and produces an already
   expired request after a long outage.
@@ -673,7 +689,7 @@ each solution would introduce its own failure mode:
   but requires the same persistence maintenance as `tokens.json`.
 
 Each reassert attempt or failed confirmation attempt is published as a
-non-retained event under `geeko/status/heatPump/reassert`:
+non-retained event under `gecko/status/heatPump/reassert`:
 
 ```json
 {
@@ -697,9 +713,9 @@ connection is currently unconfirmed, because the client may buffer the desired
 state or transmit it later. An error that occurred is recorded in
 `activate_error`; a `null` only means that the method call returned
 successfully. `active: true` must still be confirmed afterward. An attempt is
-confirmed only by a subsequent `geeko/status/zone/flow/<zone_id>` update with
+confirmed only by a subsequent `gecko/status/zone/flow/<zone_id>` update with
 `state.active: true`; the counter is then reset. The watchdog check and regular
-publication of `geeko/status/heatPump/state` run at the interval specified by
+publication of `gecko/status/heatPump/state` run at the interval specified by
 `GECKO_HEAT_PUMP_CHECK_INTERVAL`.
 
 `confirmed` is `true` when Gecko has already confirmed activation during the
@@ -712,7 +728,7 @@ zone update.
 Confirmation relies exclusively on `state.active`, without checking the
 initiator. Activity from `FI` or `CD` therefore also counts as confirmation.
 Details and limitations are documented in
-[`heatpump_sm.md`](heatpump_sm.md) under *Activity Verification Limits*.
+[`heatpump_sm.md`](heatpump_sm.md) under *Limits of the Activity Check*.
 
 Possible values for `reason`:
 
@@ -739,13 +755,13 @@ until then.
 Reassert events can be observed with this command:
 
 ```powershell
-mosquitto_sub -h mqtt.example.com -t 'geeko/status/heatPump/reassert' -v
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/heatPump/reassert' -v
 ```
 
 If the pump remains inactive after the configured number of failed reassert
 attempts, the bridge terminates the internal heat-pump request as an emergency
 stop and publishes one non-retained error event under
-`geeko/status/heatPump/error`. With
+`gecko/status/heatPump/error`. With
 `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS=0`, the emergency stop remains disabled and
 the bridge continues trying indefinitely:
 
@@ -769,7 +785,7 @@ The error event can be received only if the subscriber is already subscribed
 before the emergency stop because it is published as non-retained:
 
 ```powershell
-mosquitto_sub -h mqtt.example.com -t 'geeko/status/heatPump/error' -v
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/heatPump/error' -v
 ```
 
 The reassert counter is reset on `active: true`, `action: off`, expiration of
@@ -796,7 +812,7 @@ would be accessible only via `docker cp`. The directory is excluded in `.gitigno
 Example of a line:
 
 ```json
-{"ts":"2026-05-04T11:02:49.076556+00:00","dir":"out","topic":"geeko/status/heatPump/reassert","payload":"{\"reason\":\"zone reported inactive\"}","qos":1,"retain":false}
+{"ts":"2026-05-04T11:02:49.076556+00:00","dir":"out","topic":"gecko/status/heatPump/reassert","payload":"{\"reason\":\"zone reported inactive\"}","qos":1,"retain":false}
 ```
 
 | Field | Meaning |
@@ -822,14 +838,14 @@ day, or about 14 MB with seven days of retention.
 All state changes of the heat-pump controller in chronological order:
 
 ```powershell
-jq.exe -r 'select(.topic=="geeko/status/heatPump/state") | "\(.ts) \(.payload|fromjson|.state)"' mqtt-trace/mqtt-2026-09-30.jsonl
+jq.exe -r 'select(.topic=="gecko/status/heatPump/state") | "\(.ts) \(.payload|fromjson|.state)"' mqtt-trace/mqtt-2026-09-30.jsonl
 ```
 
 Find duplicate publications of the same state line, meaning two
 lines less than one second apart:
 
 ```powershell
-jq.exe -r 'select(.topic=="geeko/status/heatPump/state") | .ts' mqtt-trace/mqtt-2026-09-30.jsonl
+jq.exe -r 'select(.topic=="gecko/status/heatPump/state") | .ts' mqtt-trace/mqtt-2026-09-30.jsonl
 ```
 
 What the bridge received while the filter cycle was running:
@@ -929,11 +945,11 @@ necessary. `restart: unless-stopped` only applies after a process crash.
 
 ### Two Details to Consider When Analyzing
 
-**`geeko/auth/status` does not reflect an outage.** It remains `authenticated`
+**`gecko/auth/status` does not reflect an outage.** It remains `authenticated`
 throughout the outage because the value is set only when `_connect_worker`
 succeeds, and that worker has long since finished. The connection recovers on
 its own, but the bridge's auth status does not report it.
-As a signal for "connected", use `geeko/status/connectivity`, which the library
+As a signal for "connected", use `gecko/status/connectivity`, which the library
 updates correctly on the first connection loss.
 
 **`client.is_connected` is stricter than "MQTT is alive".** It returns
@@ -946,10 +962,10 @@ is up but cloud login has not yet completed.
 ### `login_required` Remains Active
 
 Read the challenge, open the URL in a browser, and send the full redirect URL
-back to `geeko/auth/response`. Generate a new challenge:
+back to `gecko/auth/response`. Generate a new challenge:
 
 ```text
-mosquitto_pub -h mqtt.example.com -t geeko/auth/login -m ""
+mosquitto_pub -h mqtt.example.com -t gecko/auth/login -m ""
 ```
 
 ### `reauth_required`
@@ -974,14 +990,14 @@ exactly this case.
 
 ### No Zone Status Data
 
-First check `geeko/status/connectivity`. The Gecko IoT connection is established
+First check `gecko/status/connectivity`. The Gecko IoT connection is established
 in a daemon thread and may need some time for initial configuration after a
 successful OAuth login.
 
 After an error during the initial Gecko connect, the bridge automatically tries
 to reconnect. The wait increases from five seconds to a maximum of five
 minutes. Meanwhile, the local MQTT broker remains available and
-`geeko/auth/status` remains `authenticating` until the Gecko connection and
+`gecko/auth/status` remains `authenticating` until the Gecko connection and
 configuration have been loaded successfully.
 
 After a successful connect, the `gecko-iot-client` transport also handles
@@ -997,21 +1013,21 @@ First check whether the zone has the specified ID and is fully
 connected:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t 'geeko/status/zone/flow/+' -v
-mosquitto_sub -h mqtt.example.com -t geeko/status/connectivity -v
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/+' -v
+mosquitto_sub -h mqtt.example.com -t gecko/status/connectivity -v
 ```
 
 For a pump without speed control, use only this command:
 
 ```text
-mosquitto_pub -h mqtt.example.com -t geeko/cmd/flow/1/set -m '{"action":"on"}'
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/1/set -m '{"action":"on"}'
 ```
 
 If `speed` is sent, the flow status must first contain
 `supports_speed_percentage: true`. The response is published to:
 
 ```text
-geeko/cmd/flow/1/result
+gecko/cmd/flow/1/result
 ```
 
 With Docker, the bridge reception and Gecko forwarding logs can be
@@ -1161,7 +1177,7 @@ These cases require a real Gecko and are tracked as `TC-MAN-xx` in
 Observe all topics during the test:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t "geeko/#" -v
+mosquitto_sub -h mqtt.example.com -t "gecko/#" -v
 ```
 
 If you do not want to run a second client, use the
@@ -1173,10 +1189,10 @@ Temperature, light, and flow:
 
 | Step | Command | Expected |
 |---|---|---|
-| Set temperature | `geeko/cmd/temperature/<zone_id>/set` with `{"target_temperature":28.0}` | `result` with `success: true`, then `status/zone/temperature/<zone_id>` shows the target value |
-| Light on | `geeko/cmd/lighting/<zone_id>/set` with `{"action":"on","r":255,"g":120,"b":40}` | `success: true`, color in `status/zone/lighting/<zone_id>` |
+| Set temperature | `gecko/cmd/temperature/<zone_id>/set` with `{"target_temperature":28.0}` | `result` with `success: true`, then `status/zone/temperature/<zone_id>` shows the target value |
+| Light on | `gecko/cmd/lighting/<zone_id>/set` with `{"action":"on","r":255,"g":120,"b":40}` | `success: true`, color in `status/zone/lighting/<zone_id>` |
 | Light off | `{"action":"off"}` | `success: true`, `active: false` |
-| Flow on | `geeko/cmd/flow/<zone_id>/set` with `{"action":"on"}` | `success: true` and `active: true` |
+| Flow on | `gecko/cmd/flow/<zone_id>/set` with `{"action":"on"}` | `success: true` and `active: true` |
 | Flow with `speed` on a non-adjustable pump | `{"action":"on","speed":50}` | `success: false` with `supports on/off only; speed percentage is not supported` |
 
 Heat pump. For a quick run, temporarily set `GECKO_HEAT_PUMP_DEFAULT_DURATION`
@@ -1185,14 +1201,14 @@ to a small value, for example `2`, and keep
 
 | Step | Action | Expected |
 |---|---|---|
-| Arm | `geeko/cmd/heatPump` with `{"action":"on","duration":2}` | `cmd/heatPump/result` with `success: true`; `status/heatPump/state` changes to `waiting_confirmation` and, after a confirmed zone update, to `running` |
+| Arm | `gecko/cmd/heatPump` with `{"action":"on","duration":2}` | `cmd/heatPump/result` with `success: true`; `status/heatPump/state` changes to `waiting_confirmation` and, after a confirmed zone update, to `running` |
 | Extend runtime | again `{"action":"on","duration":10}` | `remaining_seconds` increases noticeably, `state` remains `running`, `armed: true` |
 | Do not shorten runtime | `{"action":"on","duration":1}` during a 10-minute request | `remaining_seconds` remains at the longer remaining runtime |
 | Watchdog heartbeat | leave `status/heatPump/state` subscribed | Retained payload is updated at least every `GECKO_HEAT_PUMP_CHECK_INTERVAL` seconds, including during `waiting_confirmation` |
 | Reassert | stop the pump manually via the Gecko app or a filter cycle | `status/heatPump/reassert` with `reason: zone became inactive`; then back to `running` |
 | Expiration | choose `duration` short enough and wait | `status/heatPump/state` with `state: disarmed_expired`, `armed: false`, `remaining_seconds: null`; flow zone is inactive |
 | Emergency stop | disconnect the Gecko connection until `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` is reached | `status/heatPump/reassert` with `reason: gecko disconnected`, followed once by `status/heatPump/error` with `error: emergency_stop`; **no** `deactivate()` on Gecko. The retained state then shows `state: error` with `armed: false` |
-| Re-arm | `status/heatPump/error` was not subscribed: `geeko/status/heatPump/state` shows `state: error` with `armed: false` after the emergency stop; then `{"action":"on"}` | New cycle, `error_count` starts again at `0`, state changes to `waiting_confirmation` |
+| Re-arm | `status/heatPump/error` was not subscribed: `gecko/status/heatPump/state` shows `state: error` with `armed: false` after the emergency stop; then `{"action":"on"}` | New cycle, `error_count` starts again at `0`, state changes to `waiting_confirmation` |
 | Off | `{"action":"off"}` | `state: disarmed`, `armed: false`; flow zone is inactive |
 | Shutdown | `docker compose stop` | `status/availability` changes retained from `online` to `offline` |
 
@@ -1211,7 +1227,7 @@ Gecko Cloud / AWS IoT
         ▼
 Local MQTT broker
         │
-      geeko/#
+      gecko/#
 ```
 
 The Gecko client's callbacks originate from background threads. Status publishes

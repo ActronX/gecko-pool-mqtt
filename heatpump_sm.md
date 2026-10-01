@@ -81,11 +81,11 @@ semantics to the bridge, and initiator-specific confirmation would trigger a
 reassert during an `FI`-driven pump run even though the pump is running. As a
 result, state `running` does not guarantee that `UD` or `HTP` is currently set.
 To check the actual initiator, read `state.initiators` from
-`geeko/status/zone/flow/<zone_id>`.
+`gecko/status/zone/flow/<zone_id>`.
 
 ## States
 
-The `state` string in `geeko/status/heatPump/state` can have the following values:
+The `state` string in `gecko/status/heatPump/state` can have the following values:
 
 | State | Meaning |
 |---|---|
@@ -138,7 +138,7 @@ stateDiagram-v2
 Topic:
 
 ```text
-geeko/cmd/heatPump
+gecko/cmd/heatPump
 ```
 
 Request the heat pump for 33 minutes:
@@ -165,7 +165,7 @@ remaining runtime is longer, it is not shortened.
 Topic:
 
 ```text
-geeko/status/heatPump/state
+gecko/status/heatPump/state
 ```
 
 The status is published retained. With an active watchdog, it is also published
@@ -186,7 +186,7 @@ The published `state` never contradicts `armed` or `remaining_seconds`:
 `armed: true` and a remaining runtime.
 
 The `state` field of the command acknowledgment on
-`geeko/cmd/heatPump/result` is the state produced by the command, not the
+`gecko/cmd/heatPump/result` is the state produced by the command, not the
 previous state. An `on` immediately after a restart therefore reports
 `waiting_confirmation` or `running`, not the initial `disarmed` state.
 
@@ -239,7 +239,7 @@ Each relevant error increments `error_count` and creates a non-retained event
 on:
 
 ```text
-geeko/status/heatPump/reassert
+gecko/status/heatPump/reassert
 ```
 
 The following are counted in particular:
@@ -274,7 +274,7 @@ GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS=3
 When the limit is reached, the controller publishes a non-retained event on:
 
 ```text
-geeko/status/heatPump/error
+gecko/status/heatPump/error
 ```
 
 The controller is then disarmed and state `error` is published. This applies

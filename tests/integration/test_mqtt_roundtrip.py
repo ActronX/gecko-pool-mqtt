@@ -33,21 +33,21 @@ pytestmark = pytest.mark.integration
 def availability() -> str:
     """Availability-Topic.
 
-    Wird bewusst je Abruf aus den Settings gelesen: ``isolated_settings``
-    setzt ``MQTT_BASE_TOPIC`` erst zur Testzeit, ein Modulkonstante wuerde
-    den Wert aus der echten ``.env`` verwenden.
+    Read from the settings on every call on purpose: ``isolated_settings``
+    only sets ``MQTT_BASE_TOPIC`` at test time, a module constant would use
+    the value from the real ``.env``.
     """
     return f"{settings.mqtt_base_topic}/status/availability"
 
 
 class BrokerSubscriber:
-    """Echter paho-Client, der Nachrichten eines Brokers mitliest."""
+    """Real paho client that reads the messages of a broker."""
 
     def __init__(self, host: str, port: int) -> None:
         self.messages: list[mqtt.MQTTMessage] = []
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
-            client_id=f"geeko-test-sub-{uuid.uuid4().hex[:8]}",
+            client_id=f"gecko-test-sub-{uuid.uuid4().hex[:8]}",
         )
         self.client.on_message = self._on_message
         self.client.connect(host, port, keepalive=30)
@@ -101,7 +101,7 @@ class BrokerSubscriber:
         try:
             self.client.loop_stop()
             self.client.disconnect()
-        except Exception:  # pragma: no cover - nur Aufraeumen
+        except Exception:  # pragma: no cover - cleanup only
             pass
 
 
@@ -118,7 +118,7 @@ async def publish(host: str, port: int, topic: str, payload: Any) -> None:
     def send() -> None:
         client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
-            client_id=f"geeko-test-pub-{uuid.uuid4().hex[:8]}",
+            client_id=f"gecko-test-pub-{uuid.uuid4().hex[:8]}",
         )
         client.connect(host, port, keepalive=30)
         client.loop_start()
@@ -134,7 +134,7 @@ async def publish(host: str, port: int, topic: str, payload: Any) -> None:
 
 @pytest.fixture
 async def stack(monkeypatch: pytest.MonkeyPatch, mqtt_broker: tuple[str, int]):
-    """Bridge plus Controller mit gefaelschtem Gecko-Client."""
+    """Bridge plus Controller with a faked Gecko client."""
     host, port = mqtt_broker
     # The bridge must reach the broker inside the container, not 127.0.0.1.
     monkeypatch.setattr(settings, "mqtt_host", host)
@@ -282,7 +282,7 @@ async def test_tc_int_03_invalid_payload_is_answered_and_bridge_survives(stack) 
         payload = await subscriber.wait_for_json(
             topic,
             lambda data: data.get("success") is False,
-            "Fehlerresult fuer flow",
+            "Error result for flow",
         )
         assert "action must be on or off" in payload["message"]
 

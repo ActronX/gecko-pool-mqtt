@@ -38,7 +38,7 @@ BLOCKING_MUTATIONS = {
 #: Pure helpers called exclusively through asyncio.to_thread.
 ALLOWED_HELPERS = {"set_target_temperature", "set_light", "set_flow"}
 
-#: Lokale Lesezugriffe, die laut Anforderung auf dem Eventloop bleiben.
+#: Local read accesses that per the requirement stay on the event loop.
 LOCAL_READS = {"is_connected", "active", "initiators", "get_zone_by_id_and_type"}
 
 
@@ -67,7 +67,7 @@ class MutationVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute):
             if node.func.attr == "to_thread":
-                # Argumente von to_thread sind per Definition ausgelagert.
+                # Arguments to to_thread are offloaded by definition.
                 for argument in list(node.args) + [kw.value for kw in node.keywords]:
                     self.allowed_nodes.add(id(argument))
             elif node.func.attr in BLOCKING_MUTATIONS:
@@ -90,7 +90,7 @@ def collect_violations() -> list[tuple[str, int, str]]:
 
 
 def offloaded_reads() -> list[str]:
-    """Findet lokale Lesezugriffe, die faelschlich ausgelagert wurden."""
+    """Finds local read accesses that were offloaded by mistake."""
     findings: list[str] = []
     for path in app_sources():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -116,7 +116,7 @@ def test_tc_thr_01_no_blocking_mutation_outside_to_thread() -> None:
     violations = collect_violations()
 
     assert violations == [], (
-        "Blockierende Gecko-Aufrufe ausserhalb von asyncio.to_thread gefunden: "
+        "Blocking Gecko calls outside asyncio.to_thread found: "
         f"{violations}"
     )
 
@@ -132,7 +132,7 @@ def test_tc_thr_01_all_mutation_methods_are_covered() -> None:
                     found.add(node.func.attr)
 
     assert found == BLOCKING_MUTATIONS, (
-        f"Erwartet alle sechs blockierenden Methoden, gefunden: {sorted(found)}"
+        f"Expected all six blocking methods, found: {sorted(found)}"
     )
 
 
@@ -190,7 +190,7 @@ async def test_tc_thr_02_blocking_call_does_not_stop_event_loop(harness: HeatPum
 
 
 def default_executor_workers() -> int:
-    """Groesse des Standard-Executors, wie CPython sie anlegt."""
+    """Size of the default executor as CPython creates it."""
     return min(32, (os.cpu_count() or 1) + 4)
 
 
@@ -269,13 +269,13 @@ async def test_tc_thr_07_burst_runs_in_parallel(pool) -> None:
 
     sequential = block_seconds * count
     assert elapsed < sequential * 0.75, (
-        f"{count} Aufrufe zu {block_seconds}s brauchten {elapsed:.2f}s, "
-        f"seriell waeren es {sequential:.2f}s"
+        f"{count} calls at {block_seconds}s needed {elapsed:.2f}s, "
+        f"sequentially it would be {sequential:.2f}s"
     )
 
 
 async def test_tc_thr_07_queue_depth_adds_latency(pool) -> None:
-    """R-THR-04: Mehr gleichzeitige Aufrufe als Executor-Threads werden eingereiht.
+    """R-THR-04: More concurrent calls than executor threads get queued.
 
     Documents the upper bound: the default executor has
     `min(32, cpu_count + 4)` threads. Every further blocking call waits, which
@@ -284,7 +284,7 @@ async def test_tc_thr_07_queue_depth_adds_latency(pool) -> None:
     """
     block_seconds = 0.2
     workers = default_executor_workers()
-    # Deutlich ueber der Kapazitaet, damit Einreihen unvermeidlich ist.
+    # Well above the capacity, so queueing is unavoidable.
     count = workers + 2
 
     zones = [
@@ -382,7 +382,7 @@ async def test_tc_thr_04_reassert_task_swallows_exceptions(harness: HeatPumpHarn
 
 
 async def test_tc_thr_05_mqtt_command_is_marshalled_to_the_loop(harness: HeatPumpHarness) -> None:
-    """R-THR-02: MQTT-Kommandos werden auf den Eventloop gefuehrt."""
+    """R-THR-02: MQTT commands are routed onto the event loop."""
     harness.quiet_watchdog()
 
     harness.controller.handle_command({"action": "on", "duration": 30})
@@ -410,7 +410,7 @@ async def test_tc_thr_06_zone_update_is_marshalled_to_the_loop(harness: HeatPump
 async def test_tc_thr_06_marshalled_update_uses_current_zone_instance(
     harness: HeatPumpHarness,
 ) -> None:
-    """R-THR-03: Callbacks erhalten dieselbe Zoneninstanz wie der Controller."""
+    """R-THR-03: Callbacks receive the same zone instance as the controller."""
     await harness.on(duration=30)
     assert harness.zone.active is False
 

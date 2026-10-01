@@ -1,7 +1,7 @@
 """Requirements R-SER: zone serialization (TC-SER-01 through TC-SER-14).
 
 ``zone_serializer`` checks zone types with ``isinstance``. The tests replace
-diese types with fakes so our mapping logic is tested rather than the library's
+these types with fakes so our mapping logic is tested rather than the library's
 class structure. ``ZoneType`` and ``FlowZoneInitiator`` come from the library
 because they are real keys
 beziehungsweise Codes liefern.
@@ -54,7 +54,7 @@ def patched_zone_classes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_tc_ser_01_temperature_zone_is_mapped() -> None:
-    """R-SER-01: Temperaturzone mit aktuellem und Zielwert."""
+    """R-SER-01: Temperature zone with current and target value."""
     zone = FakeTemperatureControlZone("zone-1", name="Pool", zone_type=ZoneType.TEMPERATURE_CONTROL_ZONE)
     zone.temperature = 27.5
     zone.target_temperature = 28.0
@@ -98,7 +98,7 @@ def test_tc_ser_01_missing_status_and_mode_yield_none() -> None:
 
 
 def test_tc_ser_02_lighting_zone_is_mapped() -> None:
-    """R-SER-02: Lichtzone mit Aktivitaet, Farbe und Effekt."""
+    """R-SER-02: Lighting zone with activity, colour and effect."""
     zone = FakeLightingZone("l-1", name="LED", zone_type=ZoneType.LIGHTING_ZONE)
     zone.active = True
     zone.rgbi = FakeRgbi({"red": 255, "green": 0, "blue": 40})
@@ -110,7 +110,7 @@ def test_tc_ser_02_lighting_zone_is_mapped() -> None:
 
 
 def test_tc_ser_02_lighting_zone_without_colour() -> None:
-    """R-SER-02: Ohne gesetzte Farbe ist color null."""
+    """R-SER-02: Without a colour set, color is null."""
     zone = FakeLightingZone(zone_type=ZoneType.LIGHTING_ZONE)
     zone.rgbi = None
 
@@ -123,7 +123,7 @@ def test_tc_ser_02_lighting_zone_without_colour() -> None:
 
 
 def test_tc_ser_03_flow_zone_is_mapped() -> None:
-    """R-SER-03: Flowzone mit Zustand, Initiatoren und Faehigkeiten."""
+    """R-SER-03: Flow zone with state, initiators and capabilities."""
     zone = FakeFlowZone("4", name="Pump 4", zone_type=ZoneType.FLOW_ZONE)
     zone.active = True
     zone.speed = 50
@@ -150,7 +150,7 @@ def test_tc_ser_03_flow_zone_is_mapped() -> None:
 
 
 def test_tc_ser_03_multiple_initiators_are_preserved() -> None:
-    """R-SER-03: Mehrere gleichzeitige Ursachen werden uebertragen."""
+    """R-SER-03: Several simultaneous causes are transferred."""
     zone = FakeFlowZone(zone_type=ZoneType.FLOW_ZONE)
     zone.initiators = [FlowZoneInitiator.HEATING, FlowZoneInitiator.FILTRATION]
 
@@ -161,7 +161,7 @@ def test_tc_ser_03_multiple_initiators_are_preserved() -> None:
 
 
 def test_tc_ser_03_presetless_zone_yields_empty_presets() -> None:
-    """R-SER-03: Ohne Presets bleibt die Liste leer."""
+    """R-SER-03: Without presets the list stays empty."""
     zone = FakeFlowZone(zone_type=ZoneType.FLOW_ZONE)
     zone.presets = []
 
@@ -174,7 +174,7 @@ def test_tc_ser_03_presetless_zone_yields_empty_presets() -> None:
 
 
 def test_tc_ser_04_unknown_initiator_code_is_labelled() -> None:
-    """R-SER-04: Unbekannte Codes bleiben erhalten und werden markiert."""
+    """R-SER-04: Unknown codes are preserved and marked."""
     zone = FakeFlowZone(zone_type=ZoneType.FLOW_ZONE)
     zone.initiators = ["ZZ", "FI"]
 
@@ -198,7 +198,7 @@ def test_tc_ser_04_all_documented_codes_have_labels() -> None:
 
 
 def test_tc_ser_04_missing_initiators_yield_empty_lists() -> None:
-    """R-SER-04: Ohne Initiatoren bleiben beide Listen leer."""
+    """R-SER-04: Without initiators both lists stay empty."""
     zone = FakeFlowZone(zone_type=ZoneType.FLOW_ZONE)
     zone.initiators = None
 
@@ -214,7 +214,7 @@ def test_tc_ser_04_missing_initiators_yield_empty_lists() -> None:
 
 
 def test_tc_ser_05_speed_percentage_requires_step_increment() -> None:
-    """R-SER-05: supports_speed_percentage ist nur bei stepIncrement ungleich 0 wahr."""
+    """R-SER-05: supports_speed_percentage is true only with a non-zero stepIncrement."""
     zone = FakeFlowZone(zone_type=ZoneType.FLOW_ZONE)
     zone.speed_config = {"stepIncrement": 0}
 
@@ -230,7 +230,7 @@ def test_tc_ser_05_zone_without_speed_config_is_not_regulable() -> None:
 
 
 def test_tc_ser_06_capabilities_are_sorted() -> None:
-    """R-SER-06: Faehigkeiten werden als Liste von Werten sortiert ausgegeben."""
+    """R-SER-06: Capabilities are output as a sorted list of values."""
     zone = FakeFlowZone(zone_type=ZoneType.FLOW_ZONE)
     zone.capabilities = [SimpleNamespace(value="supports_turn_off"), SimpleNamespace(value="supports_turn_on")]
 
@@ -267,15 +267,15 @@ def test_tc_ser_06_unknown_zone_type_falls_back_to_value() -> None:
 
 
 # --------------------------------------------------------------------------
-# R-SER-07 Unbekannte Zonen
+# R-SER-07 Unknown zones
 # --------------------------------------------------------------------------
 
 
 def test_tc_ser_07_unknown_zone_type_yields_empty_state() -> None:
     """R-SER-07: An unknown zone gets an empty state."""
-    zone = FakeUnknownZone("x1", name="Spaet", zone_type=FakeZoneType("custom"))
+    zone = FakeUnknownZone("x1", name="Late", zone_type=FakeZoneType("custom"))
 
-    assert serialize_zone(zone) == {"id": "x1", "name": "Spaet", "type": "custom", "state": {}}
+    assert serialize_zone(zone) == {"id": "x1", "name": "Late", "type": "custom", "state": {}}
 
 
 # --------------------------------------------------------------------------
@@ -291,7 +291,7 @@ def test_tc_ser_08_connectivity_uses_to_dict() -> None:
 
 
 def test_tc_ser_08_connectivity_without_to_dict_is_wrapped() -> None:
-    """R-SER-08: Objekte ohne to_dict werden als roher Wert ausgegeben."""
+    """R-SER-08: Objects without to_dict are output as the raw value."""
     assert serialize_connectivity("verbunden") == {"raw": "verbunden"}
 
 
@@ -316,7 +316,7 @@ def test_tc_ser_01_zone_type_defaults_to_english_label() -> None:
     ],
 )
 def test_tc_ser_01_every_zone_type_has_a_label(zone_class: Any, zone_type: Any, expected: str) -> None:
-    """R-SER-01: Jeder unterstuetzte Zonentyp hat eine Bezeichnung."""
+    """R-SER-01: Every supported zone type has a label."""
     zone = zone_class(zone_type=zone_type)
 
     assert serialize_zone(zone)["type"] == expected

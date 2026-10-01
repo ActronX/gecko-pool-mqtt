@@ -20,7 +20,7 @@ from app.mqtt_bridge import MqttBridge
 
 from .fakes import FakeMqttMessageInfo, FakePahoClient
 
-BASE = "geeko_test"
+BASE = "gecko_test"
 
 
 @dataclass
@@ -108,7 +108,7 @@ def test_tc_mq_01_base_topic_trailing_slash_is_removed(monkeypatch: pytest.Monke
 
 def test_tc_mq_02_client_id_is_passed(harness: BridgeHarness) -> None:
     """R-MQ-02: The configured client ID is used."""
-    assert harness.ctor_kwargs["client_id"] == "geeko-pool-mqtt-test"
+    assert harness.ctor_kwargs["client_id"] == "gecko-pool-mqtt-test"
 
 
 def test_tc_mq_02_last_will_marks_offline(harness: BridgeHarness) -> None:
@@ -484,27 +484,27 @@ def test_tc_mq_16_clear_challenge_sends_empty_retained_message(harness: BridgeHa
 # --------------------------------------------------------------------------
 
 
-def spureinstraege() -> list[dict[str, Any]]:
+def trace_entries() -> list[dict[str, Any]]:
     """Reads the daily files in the trace directory set by the fixture."""
-    eintraege: list[dict[str, Any]] = []
-    for datei in sorted(Path(settings.mqtt_trace_dir).glob("mqtt-*.jsonl")):
-        for zeile in datei.read_text(encoding="utf-8").splitlines():
-            if zeile.strip():
-                eintraege.append(json.loads(zeile))
-    return eintraege
+    entries: list[dict[str, Any]] = []
+    for day_file in sorted(Path(settings.mqtt_trace_dir).glob("mqtt-*.jsonl")):
+        for line in day_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                entries.append(json.loads(line))
+    return entries
 
 
 def test_tc_mq_17_outgoing_publish_is_recorded(harness: BridgeHarness) -> None:
     """R-MQ-17: Each publish enters the trace with topic, dir out, qos, and retain."""
     harness.bridge.publish_heat_pump_state({"state": "running", "zone_id": "4"})
 
-    eintrag = spureinstraege()[-1]
-    assert eintrag["dir"] == "out"
-    assert eintrag["topic"] == f"{BASE}/status/heatPump/state"
-    assert json.loads(eintrag["payload"]) == {"state": "running", "zone_id": "4"}
-    assert eintrag["qos"] == 1
-    assert eintrag["retain"] is True
-    assert eintrag["ts"].endswith("+00:00")
+    entry = trace_entries()[-1]
+    assert entry["dir"] == "out"
+    assert entry["topic"] == f"{BASE}/status/heatPump/state"
+    assert json.loads(entry["payload"]) == {"state": "running", "zone_id": "4"}
+    assert entry["qos"] == 1
+    assert entry["retain"] is True
+    assert entry["ts"].endswith("+00:00")
 
 
 def test_tc_mq_17_incoming_message_is_recorded_before_dispatch(
@@ -513,10 +513,10 @@ def test_tc_mq_17_incoming_message_is_recorded_before_dispatch(
     """R-MQ-17: An incoming message is in the trace before it takes effect."""
     harness.client.fire_message(f"{BASE}/cmd/flow/4/set", b'{"action":"on"}')
 
-    eintrag = spureinstraege()[-1]
-    assert eintrag["dir"] == "in"
-    assert eintrag["topic"] == f"{BASE}/cmd/flow/4/set"
-    assert eintrag["payload"] == '{"action":"on"}'
+    entry = trace_entries()[-1]
+    assert entry["dir"] == "in"
+    assert entry["topic"] == f"{BASE}/cmd/flow/4/set"
+    assert entry["payload"] == '{"action":"on"}'
     assert harness.dispatched == [("flow", "4", {"action": "on"})]
 
 
@@ -528,20 +528,20 @@ def test_tc_mq_17_failed_publish_is_recorded(harness: BridgeHarness) -> None:
     harness.client.publish_rc = 4
 
     assert harness.bridge.publish("status/availability", "online", qos=1, retain=True) is None
-    assert spureinstraege()[-1]["topic"] == f"{BASE}/status/availability"
+    assert trace_entries()[-1]["topic"] == f"{BASE}/status/availability"
 
 
 def test_tc_mq_17_auth_response_is_redacted(harness: BridgeHarness) -> None:
     """R-MQ-17: The OAuth code from auth/response is not stored in plain text."""
     harness.client.fire_message(f"{BASE}/auth/response", b"https://app.test/redirect?code=SECRET")
 
-    eintrag = spureinstraege()[-1]
-    assert eintrag["topic"] == f"{BASE}/auth/response"
-    assert eintrag["payload"] == "<redacted>"
-    assert eintrag["bytes"] > 0
-    roh = Path(settings.mqtt_trace_dir)
-    for datei in roh.glob("mqtt-*.jsonl"):
-        assert "SECRET" not in datei.read_text(encoding="utf-8")
+    entry = trace_entries()[-1]
+    assert entry["topic"] == f"{BASE}/auth/response"
+    assert entry["payload"] == "<redacted>"
+    assert entry["bytes"] > 0
+    raw = Path(settings.mqtt_trace_dir)
+    for day_file in raw.glob("mqtt-*.jsonl"):
+        assert "SECRET" not in day_file.read_text(encoding="utf-8")
     # The message still takes effect.
     assert harness.auth_response == ["https://app.test/redirect?code=SECRET"]
 

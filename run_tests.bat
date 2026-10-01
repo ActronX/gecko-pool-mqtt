@@ -1,6 +1,6 @@
 @echo off
 REM ==========================================================================
-REM  run_tests.bat - Test suite for geeko-pool-mqtt
+REM  run_tests.bat - Test suite for gecko-pool-mqtt
 REM
 REM  Usage:
 REM    run_tests.bat                 Unit tests, execution mode automatic

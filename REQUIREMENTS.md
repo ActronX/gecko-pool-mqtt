@@ -1,6 +1,6 @@
 # Requirements and Test Cases
 
-This document is the normative requirements source for `geeko-pool-mqtt`.
+This document is the normative requirements source for `gecko-pool-mqtt`.
 It lists the requirements derived from the code and documentation and their
 associated test cases.
 
@@ -21,7 +21,7 @@ replaced with fakes from `tests/fakes.py`. Its package metadata, internal state
 management, and the Gecko IoT cloud it uses are outside these requirements.
 The bridge targets this version's synchronous API generation, not the
 asynchronous examples in its package description; see
-[Gecko-Bibliothek und API-Version](README.md#gecko-bibliothek-und-api-version).
+[Gecko Library and API Version](README.md#gecko-library-and-api-version).
 
 The Gecko IoT cloud itself is not contacted. The only integration test uses a
 local broker and a fake Gecko client.
@@ -345,12 +345,12 @@ seconds.
 
 ## Known Gaps
 
-- **`geeko/auth/status` does not reflect an outage.** `authenticated` is set only
+- **`gecko/auth/status` does not reflect an outage.** `authenticated` is set only
   by `_mark_connected`, which is called only by `_connect_worker`. Because this
   thread ends after the initial connection, the value remains `authenticated`
   during an outage even though the connection is gone. If the connection
   recovers by itself, the auth status remains unchanged. Use
-  `geeko/status/connectivity` as the connection indicator. See R-GE-11 and R-GE-12.
+  `gecko/status/connectivity` as the connection indicator. See R-GE-11 and R-GE-12.
 - **`bool` is accepted for lighting colors.** The check for `r`, `g`, `b`, and
   `intensity` in `_validate_command` does not reject `bool`, so `true` is taken as
   `1`. For `flow`, `bool` is explicitly rejected for `speed`. The checks are

@@ -619,7 +619,7 @@ async def test_tc_hp_21_disconnected_state_is_published(harness: HeatPumpHarness
     assert "disconnected" in harness.mqtt.state_messages()
 
 
-@pytest.mark.parametrize("modus", ["aktiv", "wartend", "offline"])
+@pytest.mark.parametrize("modus", ["active", "pending", "offline"])
 async def test_tc_hp_21_watchdog_publishes_state_once_per_cycle(
     harness: HeatPumpHarness, modus: str
 ) -> None:
@@ -632,7 +632,7 @@ async def test_tc_hp_21_watchdog_publishes_state_once_per_cycle(
     """
     harness.quiet_watchdog()
     await harness.on(duration=30)
-    if modus == "aktiv":
+    if modus == "active":
         harness.zone_update(active=True)
     elif modus == "offline":
         harness.zone_update(active=True)
@@ -650,7 +650,7 @@ async def test_tc_hp_21_watchdog_publishes_state_once_per_cycle(
         for payload in harness.mqtt.heat_pump_states[start:]
     ]
     assert len(stamps) >= 2, "The watchdog did not publish the state regularly"
-    gaps = [(spaeter - vorher).total_seconds() for vorher, spaeter in zip(stamps, stamps[1:])]
+    gaps = [(later - earlier).total_seconds() for earlier, later in zip(stamps, stamps[1:])]
     assert min(gaps) > 0.001, f"Duplicate publication {min(gaps) * 1000:.2f} ms apart: {gaps}"
 
 
@@ -700,7 +700,7 @@ async def test_tc_hp_10_failing_reassert_is_recorded(harness: HeatPumpHarness) -
     harness.quiet_watchdog()
     await harness.on(duration=30)
     harness.zone_update(active=True)
-    harness.zone.fail("activate", RuntimeError("PUACK fehlt"))
+    harness.zone.fail("activate", RuntimeError("PUACK missing"))
 
     harness.zone_update(active=False)
     await harness.settle(3)
@@ -710,7 +710,7 @@ async def test_tc_hp_10_failing_reassert_is_recorded(harness: HeatPumpHarness) -
     ]
     assert failed, "No failed reassert was published"
     assert "activate failed" in failed[-1]["reason"]
-    assert "PUACK fehlt" in failed[-1]["activate_error"]
+    assert "PUACK missing" in failed[-1]["activate_error"]
 
 
 # --------------------------------------------------------------------------
@@ -779,7 +779,7 @@ async def test_tc_hp_13_off_disarms_and_deactivates(harness: HeatPumpHarness) ->
 async def test_tc_hp_14_off_survives_deactivate_error(harness: HeatPumpHarness) -> None:
     """R-HP-14: A deactivate failure does not make off fail."""
     await harness.on(duration=30)
-    harness.zone.fail("deactivate", RuntimeError("Pumpe laeuft mit Initiatoren"))
+    harness.zone.fail("deactivate", RuntimeError("Pump runs with initiators"))
 
     await harness.off()
 
@@ -1028,9 +1028,9 @@ async def test_tc_hp_17_late_activate_after_expiry_does_not_rearm(harness: HeatP
 
 def test_tc_hp_19_register_failure_publishes_reassert(harness: HeatPumpHarness) -> None:
     """R-HP-19: Every failure creates a reassert event."""
-    harness.controller._register_failure("mein grund", None, False, None)
+    harness.controller._register_failure("my reason", None, False, None)
 
-    assert harness.mqtt.reassert_reasons() == ["mein grund"]
+    assert harness.mqtt.reassert_reasons() == ["my reason"]
     assert harness.mqtt.heat_pump_reasserts[-1]["confirmed"] is False
     assert harness.mqtt.heat_pump_reasserts[-1]["attempt"] == 1
 
@@ -1046,17 +1046,17 @@ def test_tc_hp_19_register_failure_counts_up(harness: HeatPumpHarness) -> None:
 
 async def test_tc_hp_01_activate_failure_disarms_and_reports(harness: HeatPumpHarness) -> None:
     """R-HP-01: A failure in the initial activate reports the command as failed."""
-    harness.zone.fail("activate", RuntimeError("PUBACK fehlt"))
+    harness.zone.fail("activate", RuntimeError("PUBACK missing"))
 
     await harness.on(duration=30)
 
     assert harness.controller._armed is False
     result = harness.mqtt.heat_pump_results[-1]
     assert result["success"] is False
-    assert "PUBACK fehlt" in result["message"]
+    assert "PUBACK missing" in result["message"]
     activate_errors = [entry for entry in harness.mqtt.heat_pump_reasserts if entry["activate_called"]]
     assert activate_errors, "The activate failure was not reported as a reassert"
-    assert "PUBACK fehlt" in activate_errors[-1]["activate_error"]
+    assert "PUBACK missing" in activate_errors[-1]["activate_error"]
 
 
 async def test_tc_hp_01_activate_failure_cancels_watchdog(harness: HeatPumpHarness) -> None:

@@ -114,7 +114,7 @@ async def test_tc_oa_04_state_mismatch_is_rejected(flow: OAuthFlow) -> None:
     prepare(flow)
 
     with pytest.raises(RuntimeError, match="State mismatch"):
-        await flow.exchange_code("code-1", state="falsch")
+        await flow.exchange_code("code-1", state="wrong")
 
 
 async def test_tc_oa_04_matching_state_is_accepted(flow: OAuthFlow, session: FakeWebSession) -> None:
@@ -306,7 +306,7 @@ async def test_tc_oa_09_server_error_refresh_raises_runtime_error(flow: OAuthFlo
 
 
 async def test_tc_oa_09_refresh_keeps_existing_refresh_token(flow: OAuthFlow, session: FakeWebSession) -> None:
-    """R-OA-09: Fehlt refresh_token in der Antwort, bleibt das alte erhalten."""
+    """R-OA-09: If refresh_token is missing from the answer, the old one is kept."""
     flow._refresh_token = "rt-alt"
     flow._loaded = True
     session.queue_post(FakeResponse(200, {"access_token": "at2"}))
@@ -322,7 +322,7 @@ async def test_tc_oa_09_refresh_keeps_existing_refresh_token(flow: OAuthFlow, se
 
 
 def test_tc_oa_11_safe_error_text_prefers_description() -> None:
-    """R-OA-11: error_description hat Vorrang vor error."""
+    """R-OA-11: error_description takes precedence over error."""
     assert OAuthFlow._safe_error_text('{"error_description":"zu lang","error":"invalid_grant"}') == "zu lang"
 
 
@@ -346,7 +346,7 @@ def test_tc_oa_11_safe_error_text_hides_unknown_content(body: str) -> None:
 
 @pytest.mark.parametrize("code", ["invalid_grant", "invalid_refresh_token", "invalid_token"])
 def test_tc_oa_11_invalid_grant_is_detected(code: str) -> None:
-    """R-OA-11: Bekannte Fehlercodes werden erkannt."""
+    """R-OA-11: Known error codes are recognised."""
     assert OAuthFlow._is_invalid_grant(json.dumps({"error": code})) is True
 
 
@@ -357,10 +357,10 @@ def test_tc_oa_11_other_codes_are_not_invalid_grant(body: str) -> None:
 
 
 async def test_tc_oa_13_concurrent_access_is_serialised(flow: OAuthFlow, session: FakeWebSession) -> None:
-    """R-OA-13: Gleichzeitige Tokenabrufe loesen genau einen Refresh aus."""
+    """R-OA-13: Concurrent token requests trigger exactly one refresh."""
     flow._refresh_token = "rt"
     flow._loaded = True
-    # Genau eine Antwort: jeder zusaetzliche Refresh wuerde eine leere Queue finden.
+    # Exactly one answer: any further refresh would find an empty queue.
     session.queue_post(FakeResponse(200, {"access_token": "at", "refresh_token": "rt2", "expires_in": 3600}))
 
     results = await asyncio.gather(*(flow.get_valid_access_token() for _ in range(5)))

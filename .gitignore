@@ -8,3 +8,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 .coverage
+
+# Arbeitsstand des Editors, gehoert nicht ins Repository
+/.kilo/

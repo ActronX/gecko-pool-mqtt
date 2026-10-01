@@ -31,7 +31,7 @@ from .fakes import (
     FakeZone,
 )
 
-TEST_BASE_TOPIC = "geeko_test"
+TEST_BASE_TOPIC = "gecko_test"
 TEST_ZONE_ID = "4"
 
 
@@ -49,7 +49,7 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Any:
     would write to ``/data/tokens.json``, for example.
     """
     monkeypatch.setattr(settings, "mqtt_base_topic", TEST_BASE_TOPIC)
-    monkeypatch.setattr(settings, "mqtt_client_id", "geeko-pool-mqtt-test")
+    monkeypatch.setattr(settings, "mqtt_client_id", "gecko-pool-mqtt-test")
     monkeypatch.setattr(settings, "mqtt_host", "127.0.0.1")
     monkeypatch.setattr(settings, "mqtt_port", 1883)
     monkeypatch.setattr(settings, "mqtt_username", "")
@@ -110,8 +110,8 @@ def mqtt_broker(broker_address: tuple[str, int]) -> tuple[str, int]:
     host, port = broker_address
     if not _broker_available(host, port):
         pytest.skip(
-            f"Kein MQTT-Broker auf {host}:{port}. "
-            "Start mit: docker compose -f docker-compose.test.yml up -d"
+            f"No MQTT broker on {host}:{port}. "
+            "Start with: docker compose -f docker-compose.test.yml up -d"
         )
     return host, port
 
@@ -164,7 +164,7 @@ class HeatPumpHarness:
 
 @pytest.fixture
 async def heat_pump(isolated_settings) -> HeatPumpHarness:
-    """Waermepumpen-Controller mit Attrappen und schnellen Timings."""
+    """Heat-pump controller with fakes and fast timings."""
     loop = asyncio.get_running_loop()
     mqtt = FakeMqttBridge(base=TEST_BASE_TOPIC)
     client = FakeGeckoClient(connected=True)

@@ -1,7 +1,7 @@
 services:
   gecko-mqtt:
     build: .
-    container_name: geeko-pool-mqtt
+    container_name: gecko-pool-mqtt
     env_file:
       - .env
     volumes:

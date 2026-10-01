@@ -53,8 +53,8 @@ def test_tc_cfg_01_defaults_without_environment(env) -> None:
     assert config.oauth_token_file == "/data/tokens.json"
     assert config.mqtt_host == "mqtt.example.com"
     assert config.mqtt_port == 1883
-    assert config.mqtt_base_topic == "geeko"
-    assert config.mqtt_client_id == "geeko-pool-mqtt"
+    assert config.mqtt_base_topic == "gecko"
+    assert config.mqtt_client_id == "gecko-pool-mqtt"
     assert config.mqtt_shutdown_publish_timeout == 2.0
     assert config.config_timeout == 30.0
     assert config.heat_pump_flow_zone_id == "4"
@@ -178,16 +178,16 @@ def test_tc_cfg_05_zero_max_attempts_is_valid(env) -> None:
 
 def test_tc_cfg_08_trace_values_are_read_from_environment(env) -> None:
     """R-CFG-08: The directory and retention come from the environment."""
-    config = build(env, MQTT_TRACE_DIR="/var/log/geeko", MQTT_TRACE_RETENTION_DAYS="30")
+    config = build(env, MQTT_TRACE_DIR="/var/log/gecko", MQTT_TRACE_RETENTION_DAYS="30")
 
-    assert config.mqtt_trace_dir == "/var/log/geeko"
+    assert config.mqtt_trace_dir == "/var/log/gecko"
     assert config.mqtt_trace_retention_days == 30
 
 
-@pytest.mark.parametrize("wert", ["", "off", "OFF"])
-def test_tc_cfg_08_disabled_trace_is_valid(env, wert: str) -> None:
+@pytest.mark.parametrize("value", ["", "off", "OFF"])
+def test_tc_cfg_08_disabled_trace_is_valid(env, value: str) -> None:
     """R-CFG-08: Empty or off disables the trace without errors."""
-    assert build(env, MQTT_TRACE_DIR=wert).validate() == []
+    assert build(env, MQTT_TRACE_DIR=value).validate() == []
 
 
 def test_tc_cfg_08_zero_retention_is_valid(env) -> None:
