@@ -11,6 +11,46 @@ data locally through a second, independent MQTT client:
 
 There is no HTTP, FastAPI, or Node-RED interface.
 
+## External Heat Pumps
+
+Two kinds of pool need different things here.
+
+**Gecko runs the heat pump.** The in.touch system knows the heat pump, controls
+it itself, and switches it with the heating cycle. Nothing below applies, and
+`gecko/cmd/heatPump` is not used.
+
+**The heat pump is external and unknown to Gecko.** This is the common case, and
+it is the reason the command exists. While the pool is heated, heat has to be
+carried off again, which requires the circulation flow to keep running. Gecko
+does not know the heat pump and therefore cannot react to what it needs.
+
+`gecko/cmd/heatPump` closes that gap. It holds one flow zone on for at least a
+given runtime, so water keeps moving and the external heat pump can deliver its
+heat. The zone is taken from `GECKO_HEAT_PUMP_FLOW_ZONE_ID`, which defaults to
+`4`; see `.env.example`. It has to be the zone wired to the heat pump's flow
+loop.
+
+While a request is armed, a watchdog watches that zone. Whenever it drops, the
+bridge switches it back on and reports the attempt on
+`gecko/status/heatPump/reassert`. That covers most reasons, because Gecko is not
+the only party that can stop a pump:
+
+- a filter cycle ends and the `FI` initiator is removed
+- the pump is switched off by hand in the Gecko app
+- the zone reports inactive for any other reason coming from Gecko
+
+> **The external heat pump still needs its own safety shutdown.** The command
+> only toggles one flow zone in the Gecko cloud, and every link in that chain can
+> fail: the Gecko connection, the implementation behind it, or the bridge itself.
+> A restart discards the request completely and leaves the pump off until
+> something sends `on` again. The watchdog is a convenience, not a guarantee. Keep
+> the heat pump's own flow and temperature protection in place, and never let
+> this command be the only thing between a fault and the equipment.
+
+Commands and payload fields are in
+[External Heat Pump: Holding the Flow Zone On](#external-heat-pump-holding-the-flow-zone-on),
+the complete state machine in [`heatpump_sm.md`](heatpump_sm.md).
+
 ## Gecko Library and API Version
 
 `requirements.txt` pins `gecko-iot-client==1.0.3`. This is the latest version
@@ -324,11 +364,11 @@ The flow status also contains the hardware capabilities:
 
 ```json
 {
+  "capabilities": ["supports_turn_off", "supports_turn_on"],
   "supports_speed_percentage": false,
   "supports_turn_on": true,
   "supports_turn_off": true,
-  "speed_config": null,
-  "capabilities": ["supports_turn_on", "supports_turn_off"]
+  "speed_config": null
 }
 ```
 
@@ -370,7 +410,7 @@ This command is then valid, for example:
 | `CF` | `checkflow` | Flow check |
 | `UD` | `user_demand` | Manual user demand |
 
-Example:
+Example, with the fields in the order the bridge emits them:
 
 ```json
 {
@@ -379,9 +419,14 @@ Example:
   "type": "flow",
   "state": {
     "active": true,
-    "speed": 50,
+    "speed": 100,
     "initiators": ["FI"],
     "initiator_labels": ["filtration"],
+    "capabilities": ["supports_turn_off", "supports_turn_on"],
+    "supports_speed_percentage": false,
+    "supports_turn_on": true,
+    "supports_turn_off": true,
+    "speed_config": null,
     "presets": []
   }
 }
@@ -404,16 +449,30 @@ Temperature:
 mosquitto_pub -h mqtt.example.com -t gecko/cmd/temperature/zone-1/set -m '{"target_temperature":28.0}'
 ```
 
-Turn lighting on:
-
-```json
-{"action":"on","r":255,"g":120,"b":40,"intensity":200}
-```
-
 Turn lighting off:
 
 ```json
 {"action":"off"}
+```
+
+Turn lighting on:
+
+```json
+{"action":"on"}
+```
+
+Note that `on` and `off` take different paths. `off` calls `deactivate()` and
+therefore works on every lighting zone. `on` calls `set_color` with `r`, `g` and
+`b` defaulting to `255`, so it needs a zone that supports colour. A plain
+`{"action":"on"}` is therefore the same as white light and may be rejected with
+`success: false`. The lighting payload carries no capability flags, so there is
+no way to tell in advance; the retained `gecko/status/zone/lighting/<zone_id>`
+only shows `active`, `color` and `effect`.
+
+Set colour and brightness:
+
+```json
+{"action":"on","r":255,"g":120,"b":40,"intensity":200}
 ```
 
 Set lighting effect:
@@ -425,11 +484,11 @@ Set lighting effect:
 Turn flow on:
 
 ```json
-{"action":"on","speed":50}
+{"action":"on"}
 ```
 
-This command may only be used when the flow zone reports
-`supports_speed_percentage: true` in its status. For an on/off pump, the speed
+A `speed` value may only be added when the flow zone reports
+`supports_speed_percentage: true` in its status. For an on/off pump the speed
 value must be omitted:
 
 ```json
@@ -462,23 +521,64 @@ Alternatively, subscribe to the complete snapshot:
 mosquitto_sub -h mqtt.example.com -t gecko/status/zones -v
 ```
 
-If the fourth pump has ID `4`, it can be turned on at a fixed speed
-of 50 percent:
+It groups all zones by type in one payload, shortened here to one zone per
+group:
 
-```text
-mosquitto_pub -h mqtt.example.com \
-  -t gecko/cmd/flow/4/set \
-  -m '{"action":"on","speed":50}'
+```json
+{
+  "flow": [
+    {
+      "id": "4",
+      "name": "Pump 4",
+      "type": "flow",
+      "state": {
+        "active": true,
+        "speed": 100,
+        "initiators": ["UD"],
+        "initiator_labels": ["user_demand"],
+        "capabilities": ["supports_turn_off", "supports_turn_on"],
+        "supports_speed_percentage": false,
+        "supports_turn_on": true,
+        "supports_turn_off": true,
+        "speed_config": null,
+        "presets": []
+      }
+    }
+  ],
+  "lighting": [
+    {
+      "id": "1",
+      "name": "Light 1",
+      "type": "lighting",
+      "state": {
+        "active": false,
+        "color": null,
+        "effect": null
+      }
+    }
+  ],
+  "temperature": [
+    {
+      "id": "1",
+      "name": "Water Temperature 1",
+      "type": "temperature",
+      "state": {
+        "current_temperature": 31.5,
+        "target_temperature": 15.0,
+        "status": "COOLING",
+        "eco_mode": false,
+        "min_set_point": 8,
+        "max_set_point": 40
+      }
+    }
+  ]
+}
 ```
 
-In Windows PowerShell, run the command on one line because `\` is not a
-line-continuation character there:
+Before the library has delivered any zones, the payload is an empty object
+`{}`.
 
-```powershell
-mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/4/set -m '{"action":"on","speed":50}'
-```
-
-Without specifying a speed, the pump is simply activated:
+If the fourth pump has ID `4`, it is turned on without a speed:
 
 ```text
 mosquitto_pub -h mqtt.example.com \
@@ -486,11 +586,16 @@ mosquitto_pub -h mqtt.example.com \
   -m '{"action":"on"}'
 ```
 
-PowerShell:
+In Windows PowerShell, run the command on one line because `\` is not a
+line-continuation character there:
 
 ```powershell
 mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/4/set -m '{"action":"on"}'
 ```
+
+A `speed` value only works on a pump that reports `speed_config` in its
+`gecko/status/zone/flow/4` payload. Add `-m '{"action":"on","speed":50}'` to the
+command above only in that case.
 
 The bridge publishes the response to:
 
@@ -535,9 +640,14 @@ Example status with a run reason:
   "type": "flow",
   "state": {
     "active": true,
-    "speed": 50,
+    "speed": 100,
     "initiators": ["UD"],
     "initiator_labels": ["user_demand"],
+    "capabilities": ["supports_turn_off", "supports_turn_on"],
+    "supports_speed_percentage": false,
+    "supports_turn_on": true,
+    "supports_turn_off": true,
+    "speed_config": null,
     "presets": []
   }
 }
@@ -595,11 +705,12 @@ Example of a successful ack:
 {"success":true,"message":"Target temperature set to 28.0","zone_id":"zone-1"}
 ```
 
-### External Heat Pump: Minimum Runtime
+### External Heat Pump: Holding the Flow Zone On
 
-For an external heat pump, the configured flow zone can be activated for at
-least a defined period using a dedicated command. Flow zone `4` is used by
-default; its ID can be changed with
+This command exists so that an external heat pump can deliver its heat while the
+pool is heated. See [External Heat Pumps](#external-heat-pumps) for the
+background. It activates the configured flow zone for at least a defined period.
+Flow zone `4` is used by default; its ID can be changed with
 `GECKO_HEAT_PUMP_FLOW_ZONE_ID`.
 
 The complete state machine, status payloads, and error transitions are in
@@ -647,9 +758,13 @@ successful `on` ack:
 Therefore, an `on` immediately after a restart reports `waiting_confirmation`
 or `running`, never the initial state's `disarmed`.
 
-The bridge only switches
-the Gecko pump; the external heat pump itself requires separate control and its
-own flow/safety protection.
+> **The external heat pump still needs its own safety shutdown.** The command
+> only toggles one flow zone in the Gecko cloud, and every link in that chain can
+> fail: the Gecko connection, the implementation behind it, or the bridge itself.
+> A restart discards the request completely and leaves the pump off until
+> something sends `on` again. The watchdog is a convenience, not a guarantee. Keep
+> the heat pump's own flow and temperature protection in place, and never let
+> this command be the only thing between a fault and the equipment.
 
 ### A Restart Discards the Request
 
@@ -1198,7 +1313,8 @@ Temperature, light, and flow:
 | Step | Command | Expected |
 |---|---|---|
 | Set temperature | `gecko/cmd/temperature/<zone_id>/set` with `{"target_temperature":28.0}` | `result` with `success: true`, then `status/zone/temperature/<zone_id>` shows the target value |
-| Light on | `gecko/cmd/lighting/<zone_id>/set` with `{"action":"on","r":255,"g":120,"b":40}` | `success: true`, color in `status/zone/lighting/<zone_id>` |
+| Light on | `gecko/cmd/lighting/<zone_id>/set` with `{"action":"on"}` | `success: true` and `active: true`; a zone without colour support answers `success: false` |
+| Light with colour | `{"action":"on","r":255,"g":120,"b":40}` | `success: true`, colour in `status/zone/lighting/<zone_id>` |
 | Light off | `{"action":"off"}` | `success: true`, `active: false` |
 | Flow on | `gecko/cmd/flow/<zone_id>/set` with `{"action":"on"}` | `success: true` and `active: true` |
 | Flow with `speed` on a non-adjustable pump | `{"action":"on","speed":50}` | `success: false` with `supports on/off only; speed percentage is not supported` |
