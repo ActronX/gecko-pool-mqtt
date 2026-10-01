@@ -1255,6 +1255,5 @@ manual smoke tests are documented in
 [`tests/validation.md`](tests/validation.md).
 
 The requirements and the test cases that refer to them live in
-[`REQUIREMENTS.md`](REQUIREMENTS.md), the heat-pump state machine in
-[`heatpump_sm.md`](heatpump_sm.md).
+[`REQUIREMENTS.md`](REQUIREMENTS.md).
 
