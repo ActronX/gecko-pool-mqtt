@@ -156,245 +156,6 @@ during the call, causing the watchdog to reassert again even though Gecko could
 not yet respond. The value belongs to the library, not the bridge;
 `tests/test_library_contract.py` pins the version it comes from.
 
-## External Heat Pumps
-
-Two kinds of pool need different things here.
-
-**Gecko runs the heat pump.** The in.touch system knows the heat pump, controls
-it itself, and switches it with the heating cycle. Nothing below applies, and
-`gecko/cmd/heatPump` is not used.
-
-**The heat pump is external and unknown to Gecko.** This is the common case, and
-it is the reason the command exists. While the pool is heated, heat has to be
-carried off again, which requires the circulation flow to keep running. Gecko
-does not know the heat pump and therefore cannot react to what it needs.
-
-`gecko/cmd/heatPump` closes that gap. It holds one flow zone on for at least a
-given runtime, so water keeps moving and the external heat pump can deliver its
-heat. The zone is taken from `GECKO_HEAT_PUMP_FLOW_ZONE_ID`, which defaults to
-`4`; see `.env.example`. It has to be the zone wired to the heat pump's flow
-loop.
-
-While a request is armed, a watchdog watches that zone. Whenever it drops, the
-bridge switches it back on and reports the attempt on
-`gecko/status/heatPump/reassert`. That covers most reasons, because Gecko is not
-the only party that can stop a pump:
-
-- a filter cycle ends and the `FI` initiator is removed
-- the pump is switched off by hand in the Gecko app
-- the zone reports inactive for any other reason coming from Gecko
-
-> **The external heat pump still needs its own safety shutdown.** The command
-> only toggles one flow zone in the Gecko cloud, and every link in that chain can
-> fail: the Gecko connection, the implementation behind it, or the bridge itself.
-> A restart discards the request completely and leaves the pump off until
-> something sends `on` again. The watchdog is a convenience, not a guarantee. Keep
-> the heat pump's own flow and temperature protection in place, and never let
-> this command be the only thing between a fault and the equipment.
-
-### Commands and Payloads
-
-The command deliberately uses its own topic `gecko/cmd/heatPump`
-(without `/set`):
-
-```powershell
-mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"on","duration":30}'
-```
-
-`duration` is specified in minutes. If `duration` is omitted,
-`GECKO_HEAT_PUMP_DEFAULT_DURATION` is used (30 minutes by default).
-Further `on` commands extend the active request but do not shorten it.
-
-A running request can be stopped immediately:
-
-```powershell
-mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"off"}'
-```
-
-The result is published under `gecko/cmd/heatPump/result`. Example of a
-successful `on` ack:
-
-```json
-{"success":true,"message":"Heat-pump pump request active","action":"on","zone_id":"4","duration":32,"remaining_seconds":1920,"state":"running"}
-```
-
-| Field | Meaning |
-|---|---|
-| `success` | `true` if the request was armed |
-| `message` | Short plain-text result |
-| `action` | `on` or `off` |
-| `zone_id` | Flow zone ID used |
-| `duration` | Requested minimum runtime in **minutes** |
-| `remaining_seconds` | Remaining runtime in **seconds** |
-| `state` | State produced by **this** command: `running` for an already active zone, otherwise `waiting_confirmation` |
-
-`state` deliberately describes the command transition, not the state before it.
-Therefore, an `on` immediately after a restart reports `waiting_confirmation`
-or `running`, never the initial state's `disarmed`.
-
-### A Restart Discards the Request
-
-After a bridge restart, **no** heat-pump request is
-resumed. The controller starts `disarmed`, no watchdog runs, and it does not
-reconstruct anything from the cloud state. Specifically:
-
-- `gecko/status/heatPump/state` reports `disarmed` once with `armed: false`
-  and `remaining_seconds: null`.
-- Until a new `on` has been received, the controller ignores every zone update.
-  Switching the pump off through the Gecko app also triggers **no** reassert,
-  because `_observe_zone_update` exits when `not self._armed`.
-- An initiator still set in the cloud remains in place. Shutdown deliberately
-  sends **no** `deactivate()`, so maintenance does not cut off a running filter
-  cycle. The zone then reports `armed: false` while the pump is running,
-  indistinguishable in `status/heatPump/state` from "the pump is intentionally
-  off".
-- The pump remains off until the calling automation sends again. With a
-  30-minute interval and `duration: 32`, this means up to 30 minutes without
-  heat-pump flow.
-
-To verify this without waiting for the next filter cycle:
-
-```text
-mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"on","duration":10}'
-docker compose restart
-mosquitto_sub -h mqtt.example.com -t "gecko/status/heatPump/#" -v -W 20
-```
-
-Exactly one `state` line with `disarmed` is expected, followed by nothing else.
-Now switch the pump off through the app: there must be **no** `reassert`.
-The automation's next `on` switches it on again.
-
-Both behaviors are intentional and are deliberately not being fixed because
-each solution would introduce its own failure mode:
-
-- **Reconstruct the deadline from retained state.** Read
-  `gecko/status/heatPump/state` at startup and re-arm with the remaining
-  `remaining_seconds` when `armed: true`. No additional file is needed, but this
-  survives only while the retained topic is not deleted and produces an already
-  expired request after a long outage.
-- **Persist the request alongside the tokens on `/data`.** Write the command,
-  deadline, and `error_count` on `on`; delete them on `stop`, `off`, expiration,
-  and emergency stop. This also survives `docker compose down` and a rebuild,
-  but requires the same persistence maintenance as `tokens.json`.
-
-### Reassert and Error Events
-
-Each reassert attempt or failed confirmation attempt is published as a
-non-retained event under `gecko/status/heatPump/reassert`:
-
-```json
-{
-  "timestamp": "2026-09-28T11:38:22.123456+00:00",
-  "zone_id": "4",
-  "reason": "zone became inactive",
-  "initiators": [],
-  "attempt": 1,
-  "activate_called": true,
-  "activate_error": null,
-  "confirmed": false
-}
-```
-
-`attempt` corresponds to the error counter for the current heat-pump request.
-It is `0` on the first reassert while no error has yet been counted, and
-increases from the first confirmed error onward. The first `action: on` does
-not count as a reassert. With an existing Gecko connection, `activate()` is
-called again (`activate_called: true`). This also applies when the Gecko
-connection is currently unconfirmed, because the client may buffer the desired
-state or transmit it later. An error that occurred is recorded in
-`activate_error`; a `null` only means that the method call returned
-successfully. `active: true` must still be confirmed afterward. An attempt is
-confirmed only by a subsequent `gecko/status/zone/flow/<zone_id>` update with
-`state.active: true`; the counter is then reset. The watchdog check and regular
-publication of `gecko/status/heatPump/state` run at the interval specified by
-`GECKO_HEAT_PUMP_CHECK_INTERVAL`.
-
-`confirmed` is `true` when Gecko has already confirmed activation during the
-blocking `activate()` call, before the zone-update callback could run on the
-event loop. The controller then reports `running` directly and never
-`waiting_confirmation` for a zone that is already running. In all other cases,
-`confirmed: false` remains set, and confirmation follows through the
-zone update.
-
-Confirmation relies exclusively on `state.active`, without checking the
-initiator. Activity from `FI` or `CD` therefore also counts as confirmation.
-Details and limitations are documented in
-[`heatpump_sm.md`](heatpump_sm.md) under *Limits of the Activity Check*.
-
-Possible values for `reason`:
-
-| `reason` | Trigger |
-|---|---|
-| `zone became inactive` | Watchdog check: zone inactive despite `armed` |
-| `zone reported inactive` | Zone update with `active: false` during an active request |
-| `activation not confirmed within confirm_timeout` | `active: true` did not arrive in time; `activate_called: false` |
-| `activate failed: <exception>` | The `activate()` call itself raised an exception |
-| `gecko disconnected` | Watchdog check without a complete Gecko connection |
-| `watchdog exception: <exception>` | Error during watchdog or zone lookup |
-
-With a disconnected Gecko connection, `activate()` is not called. Instead, the
-`disconnected` state is published and the offline error counter is incremented
-at most once per watchdog cycle. This is also counted when the client is
-completely absent. These errors count toward
-`GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` and can trigger an emergency stop; with
-`GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS=0`, no emergency stop occurs.
-Two details matter during an outage: Reconnecting does **not** reset the error
-counter; only a confirmation, `off`, or a new `on` does. An unstable connection
-can therefore continue the emergency stop. The state remains `disconnected`
-until then.
-
-Reassert events can be observed with this command:
-
-```powershell
-mosquitto_sub -h mqtt.example.com -t 'gecko/status/heatPump/reassert' -v
-```
-
-If the pump remains inactive after the configured number of failed reassert
-attempts, the bridge terminates the internal heat-pump request as an emergency
-stop and publishes one non-retained error event under
-`gecko/status/heatPump/error`. With
-`GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS=0`, the emergency stop remains disabled and
-the bridge continues trying indefinitely:
-
-```json
-{
-  "timestamp": "2026-09-28T11:39:22.123456+00:00",
-  "zone_id": "4",
-  "error": "emergency_stop",
-  "reason": "Pump not confirmed after 2 attempts: activation not confirmed within confirm_timeout",
-  "attempts": 2,
-  "initiators": []
-}
-```
-
-`reason` always has the form `Pump not confirmed after <n> attempts: <trigger>`.
-The `<trigger>` part is one of the `reason` values from the
-reassert table above; in this example, it is the expired
-confirmation deadline.
-
-The error event can be received only if the subscriber is already subscribed
-before the emergency stop because it is published as non-retained:
-
-```powershell
-mosquitto_sub -h mqtt.example.com -t 'gecko/status/heatPump/error' -v
-```
-
-The reassert counter is reset on `active: true`, `action: off`, expiration of
-the request, or a new request. An emergency stop terminates the current
-request; a later `action: on` starts a new count.
-
-The complete state machine, status payloads, and error transitions are in
-[`heatpump_sm.md`](heatpump_sm.md).
-
-### Switching on Solar Surplus
-
-`gecko/cmd/heatPump` is a plain MQTT command, so anything that can publish can
-trigger it. [FusionForecast](https://github.com/ActronX/fusionForecast) does that
-for solar power: its Node-RED flow switches a consumer on only when the forecast
-covers the runtime without draining the home battery below a reserved level.
-Point it at `gecko/cmd/heatPump` and the heat pump runs on solar surplus.
-
-
 ## OAuth Login over MQTT
 
 The PKCE login requires a running process because the code verifier and
@@ -896,6 +657,244 @@ Example of a successful ack:
 ```json
 {"success":true,"message":"Target temperature set to 28.0","zone_id":"zone-1"}
 ```
+
+## External Heat Pumps
+
+Two kinds of pool need different things here.
+
+**Gecko runs the heat pump.** The in.touch system knows the heat pump, controls
+it itself, and switches it with the heating cycle. Nothing below applies, and
+`gecko/cmd/heatPump` is not used.
+
+**The heat pump is external and unknown to Gecko.** This is the common case, and
+it is the reason the command exists. While the pool is heated, heat has to be
+carried off again, which requires the circulation flow to keep running. Gecko
+does not know the heat pump and therefore cannot react to what it needs.
+
+`gecko/cmd/heatPump` closes that gap. It holds one flow zone on for at least a
+given runtime, so water keeps moving and the external heat pump can deliver its
+heat. The zone is taken from `GECKO_HEAT_PUMP_FLOW_ZONE_ID`, which defaults to
+`4`; see `.env.example`. It has to be the zone wired to the heat pump's flow
+loop.
+
+While a request is armed, a watchdog watches that zone. Whenever it drops, the
+bridge switches it back on and reports the attempt on
+`gecko/status/heatPump/reassert`. That covers most reasons, because Gecko is not
+the only party that can stop a pump:
+
+- a filter cycle ends and the `FI` initiator is removed
+- the pump is switched off by hand in the Gecko app
+- the zone reports inactive for any other reason coming from Gecko
+
+> **The external heat pump still needs its own safety shutdown.** The command
+> only toggles one flow zone in the Gecko cloud, and every link in that chain can
+> fail: the Gecko connection, the implementation behind it, or the bridge itself.
+> A restart discards the request completely and leaves the pump off until
+> something sends `on` again. The watchdog is a convenience, not a guarantee. Keep
+> the heat pump's own flow and temperature protection in place, and never let
+> this command be the only thing between a fault and the equipment.
+
+### Commands and Payloads
+
+The command deliberately uses its own topic `gecko/cmd/heatPump`
+(without `/set`):
+
+```powershell
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"on","duration":30}'
+```
+
+`duration` is specified in minutes. If `duration` is omitted,
+`GECKO_HEAT_PUMP_DEFAULT_DURATION` is used (30 minutes by default).
+Further `on` commands extend the active request but do not shorten it.
+
+A running request can be stopped immediately:
+
+```powershell
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"off"}'
+```
+
+The result is published under `gecko/cmd/heatPump/result`. Example of a
+successful `on` ack:
+
+```json
+{"success":true,"message":"Heat-pump pump request active","action":"on","zone_id":"4","duration":32,"remaining_seconds":1920,"state":"running"}
+```
+
+| Field | Meaning |
+|---|---|
+| `success` | `true` if the request was armed |
+| `message` | Short plain-text result |
+| `action` | `on` or `off` |
+| `zone_id` | Flow zone ID used |
+| `duration` | Requested minimum runtime in **minutes** |
+| `remaining_seconds` | Remaining runtime in **seconds** |
+| `state` | State produced by **this** command: `running` for an already active zone, otherwise `waiting_confirmation` |
+
+`state` deliberately describes the command transition, not the state before it.
+Therefore, an `on` immediately after a restart reports `waiting_confirmation`
+or `running`, never the initial state's `disarmed`.
+
+### A Restart Discards the Request
+
+After a bridge restart, **no** heat-pump request is
+resumed. The controller starts `disarmed`, no watchdog runs, and it does not
+reconstruct anything from the cloud state. Specifically:
+
+- `gecko/status/heatPump/state` reports `disarmed` once with `armed: false`
+  and `remaining_seconds: null`.
+- Until a new `on` has been received, the controller ignores every zone update.
+  Switching the pump off through the Gecko app also triggers **no** reassert,
+  because `_observe_zone_update` exits when `not self._armed`.
+- An initiator still set in the cloud remains in place. Shutdown deliberately
+  sends **no** `deactivate()`, so maintenance does not cut off a running filter
+  cycle. The zone then reports `armed: false` while the pump is running,
+  indistinguishable in `status/heatPump/state` from "the pump is intentionally
+  off".
+- The pump remains off until the calling automation sends again. With a
+  30-minute interval and `duration: 32`, this means up to 30 minutes without
+  heat-pump flow.
+
+To verify this without waiting for the next filter cycle:
+
+```text
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/heatPump -m '{"action":"on","duration":10}'
+docker compose restart
+mosquitto_sub -h mqtt.example.com -t "gecko/status/heatPump/#" -v -W 20
+```
+
+Exactly one `state` line with `disarmed` is expected, followed by nothing else.
+Now switch the pump off through the app: there must be **no** `reassert`.
+The automation's next `on` switches it on again.
+
+Both behaviors are intentional and are deliberately not being fixed because
+each solution would introduce its own failure mode:
+
+- **Reconstruct the deadline from retained state.** Read
+  `gecko/status/heatPump/state` at startup and re-arm with the remaining
+  `remaining_seconds` when `armed: true`. No additional file is needed, but this
+  survives only while the retained topic is not deleted and produces an already
+  expired request after a long outage.
+- **Persist the request alongside the tokens on `/data`.** Write the command,
+  deadline, and `error_count` on `on`; delete them on `stop`, `off`, expiration,
+  and emergency stop. This also survives `docker compose down` and a rebuild,
+  but requires the same persistence maintenance as `tokens.json`.
+
+### Reassert and Error Events
+
+Each reassert attempt or failed confirmation attempt is published as a
+non-retained event under `gecko/status/heatPump/reassert`:
+
+```json
+{
+  "timestamp": "2026-09-28T11:38:22.123456+00:00",
+  "zone_id": "4",
+  "reason": "zone became inactive",
+  "initiators": [],
+  "attempt": 1,
+  "activate_called": true,
+  "activate_error": null,
+  "confirmed": false
+}
+```
+
+`attempt` corresponds to the error counter for the current heat-pump request.
+It is `0` on the first reassert while no error has yet been counted, and
+increases from the first confirmed error onward. The first `action: on` does
+not count as a reassert. With an existing Gecko connection, `activate()` is
+called again (`activate_called: true`). This also applies when the Gecko
+connection is currently unconfirmed, because the client may buffer the desired
+state or transmit it later. An error that occurred is recorded in
+`activate_error`; a `null` only means that the method call returned
+successfully. `active: true` must still be confirmed afterward. An attempt is
+confirmed only by a subsequent `gecko/status/zone/flow/<zone_id>` update with
+`state.active: true`; the counter is then reset. The watchdog check and regular
+publication of `gecko/status/heatPump/state` run at the interval specified by
+`GECKO_HEAT_PUMP_CHECK_INTERVAL`.
+
+`confirmed` is `true` when Gecko has already confirmed activation during the
+blocking `activate()` call, before the zone-update callback could run on the
+event loop. The controller then reports `running` directly and never
+`waiting_confirmation` for a zone that is already running. In all other cases,
+`confirmed: false` remains set, and confirmation follows through the
+zone update.
+
+Confirmation relies exclusively on `state.active`, without checking the
+initiator. Activity from `FI` or `CD` therefore also counts as confirmation.
+Details and limitations are documented in
+[`heatpump_sm.md`](heatpump_sm.md) under *Limits of the Activity Check*.
+
+Possible values for `reason`:
+
+| `reason` | Trigger |
+|---|---|
+| `zone became inactive` | Watchdog check: zone inactive despite `armed` |
+| `zone reported inactive` | Zone update with `active: false` during an active request |
+| `activation not confirmed within confirm_timeout` | `active: true` did not arrive in time; `activate_called: false` |
+| `activate failed: <exception>` | The `activate()` call itself raised an exception |
+| `gecko disconnected` | Watchdog check without a complete Gecko connection |
+| `watchdog exception: <exception>` | Error during watchdog or zone lookup |
+
+With a disconnected Gecko connection, `activate()` is not called. Instead, the
+`disconnected` state is published and the offline error counter is incremented
+at most once per watchdog cycle. This is also counted when the client is
+completely absent. These errors count toward
+`GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` and can trigger an emergency stop; with
+`GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS=0`, no emergency stop occurs.
+Two details matter during an outage: Reconnecting does **not** reset the error
+counter; only a confirmation, `off`, or a new `on` does. An unstable connection
+can therefore continue the emergency stop. The state remains `disconnected`
+until then.
+
+Reassert events can be observed with this command:
+
+```powershell
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/heatPump/reassert' -v
+```
+
+If the pump remains inactive after the configured number of failed reassert
+attempts, the bridge terminates the internal heat-pump request as an emergency
+stop and publishes one non-retained error event under
+`gecko/status/heatPump/error`. With
+`GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS=0`, the emergency stop remains disabled and
+the bridge continues trying indefinitely:
+
+```json
+{
+  "timestamp": "2026-09-28T11:39:22.123456+00:00",
+  "zone_id": "4",
+  "error": "emergency_stop",
+  "reason": "Pump not confirmed after 2 attempts: activation not confirmed within confirm_timeout",
+  "attempts": 2,
+  "initiators": []
+}
+```
+
+`reason` always has the form `Pump not confirmed after <n> attempts: <trigger>`.
+The `<trigger>` part is one of the `reason` values from the
+reassert table above; in this example, it is the expired
+confirmation deadline.
+
+The error event can be received only if the subscriber is already subscribed
+before the emergency stop because it is published as non-retained:
+
+```powershell
+mosquitto_sub -h mqtt.example.com -t 'gecko/status/heatPump/error' -v
+```
+
+The reassert counter is reset on `active: true`, `action: off`, expiration of
+the request, or a new request. An emergency stop terminates the current
+request; a later `action: on` starts a new count.
+
+The complete state machine, status payloads, and error transitions are in
+[`heatpump_sm.md`](heatpump_sm.md).
+
+### Switching on Solar Surplus
+
+`gecko/cmd/heatPump` is a plain MQTT command, so anything that can publish can
+trigger it. [FusionForecast](https://github.com/ActronX/fusionForecast) does that
+for solar power: its Node-RED flow switches a consumer on only when the forecast
+covers the runtime without draining the home battery below a reserved level.
+Point it at `gecko/cmd/heatPump` and the heat pump runs on solar surplus.
 
 ## MQTT Trace
 
