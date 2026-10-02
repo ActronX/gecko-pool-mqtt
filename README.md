@@ -424,18 +424,6 @@ therefore works on every lighting zone. `on` calls `set_color` with `r`, `g` and
 no way to tell in advance; the retained `gecko/status/zone/lighting/<zone_id>`
 only shows `active`, `color` and `effect`.
 
-Set colour and brightness:
-
-```json
-{"action":"on","r":255,"g":120,"b":40,"intensity":200}
-```
-
-Set lighting effect:
-
-```json
-{"action":"on","effect":"rainbow"}
-```
-
 Turn flow on:
 
 ```json
@@ -443,8 +431,13 @@ Turn flow on:
 ```
 
 A `speed` value may only be added when the flow zone reports
-`supports_speed_percentage: true` in its status. For an on/off pump the speed
-value must be omitted:
+`supports_speed_percentage: true` in its status. For a variable-speed pump:
+
+```json
+{"action":"on","speed":50}
+```
+
+For an on/off pump the speed value must be omitted:
 
 ```json
 {"action":"on"}
@@ -681,11 +674,11 @@ loop.
 
 While a request is armed, a watchdog watches that zone. Whenever it drops, the
 bridge switches it back on and reports the attempt on
-`gecko/status/heatPump/reassert`. That covers most reasons, because Gecko is not
+`gecko/status/heatPump/reassert`. That covers most reasons, because gecko-pool-mqtt is not
 the only party that can stop a pump:
 
-- a filter cycle ends and the `FI` initiator is removed
-- the pump is switched off by hand in the Gecko app
+- a pool filter cycle ends and the `FI` initiator is removed
+- the pump is switched off by hand in the Gecko Android / Apple app
 - the zone reports inactive for any other reason coming from Gecko
 
 > **The external heat pump still needs its own safety shutdown.** The command
