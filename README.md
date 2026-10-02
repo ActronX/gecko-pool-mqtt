@@ -160,7 +160,13 @@ state are kept only in memory.
 1. Start the service and wait for `gecko/auth/challenge`.
 2. Open the `authorize_url` value from the retained challenge in a browser.
 3. Log in to Gecko.
+
+   <img src="auth_login.png" alt="Gecko login page" width="50%">
+
 4. After the redirect, copy the complete URL from the browser address bar.
+
+   <img src="auth_code.png" alt="Redirect URL in the browser address bar" width="50%">
+
 5. Send the URL to `gecko/auth/response`:
 
 ```text
