@@ -482,8 +482,8 @@ group:
       "state": {
         "active": true,
         "speed": 100,
-        "initiators": ["UD"],
-        "initiator_labels": ["user_demand"],
+        "initiators": ["FI"],
+        "initiator_labels": ["filtration"],
         "capabilities": ["supports_turn_off", "supports_turn_on"],
         "supports_speed_percentage": false,
         "supports_turn_on": true,
@@ -540,30 +540,13 @@ status topic, because the pool controller may reject a desired state or execute
 it differently due to an automatic initiator such as `FI`
 or `CD`.
 
-After switching it off, check the actual status:
+After try switching it off, check the actual status:
 
 ```text
 mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/4' -v
 ```
 
-If the pump is running as part of an automatic cycle, the following values may
-appear in the status instead, for example:
-
-```json
-{
-  "initiators": ["FI"],
-  "initiator_labels": ["filtration"]
-}
-```
-
-```json
-{
-  "initiators": ["CD"],
-  "initiator_labels": ["cooldown"]
-}
-```
-
-The Gecko client may reject the shutdown if the pump is currently activated not
+The Gecko client may reject the shutdown `active: true` if the pump is currently activated not
 by a user request but, for example, by `FI` (`filtration`) or `CD` (`cooldown`).
 In this case, the result topic contains `success: false` and the controller's
 reason.
