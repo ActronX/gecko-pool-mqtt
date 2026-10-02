@@ -81,8 +81,8 @@ Local MQTT broker
    ```
 
    `4` is an example, use the ID from above. `success: true` means the desired
-   state reached the Gecko connection; confirm it on the retained status topic as
-   described in [Example: Turn On Pump 4](#example-turn-on-pump-4).
+   state reached the Gecko connection; confirm the applied state on the retained
+   status topic, as [Example: Turn Off Pump 4](#example-turn-off-pump-4) shows.
    
 ## Configuration
 
@@ -404,13 +404,13 @@ Temperature:
 mosquitto_pub -h mqtt.example.com -t gecko/cmd/temperature/zone-1/set -m '{"target_temperature":28.0}'
 ```
 
-Turn lighting off:
+Turn lighting off, sent to `gecko/cmd/lighting/<zone_id>/set`:
 
 ```json
 {"action":"off"}
 ```
 
-Turn lighting on:
+Turn lighting on, sent to `gecko/cmd/lighting/<zone_id>/set`:
 
 ```json
 {"action":"on"}
@@ -424,7 +424,7 @@ therefore works on every lighting zone. `on` calls `set_color` with `r`, `g` and
 no way to tell in advance; the retained `gecko/status/zone/lighting/<zone_id>`
 only shows `active`, `color` and `effect`.
 
-Turn flow on:
+Turn flow on, sent to `gecko/cmd/flow/<zone_id>/set`:
 
 ```json
 {"action":"on"}
@@ -454,7 +454,7 @@ responds under the respective `result` topic with `success: false`, for example:
 }
 ```
 
-### Example: Turn On Pump 4
+### Example: Turn Off Pump 4
 
 The zone ID is not necessarily included in the display name. First list the flow
 zones:
@@ -526,45 +526,12 @@ group:
 Before the library has delivered any zones, the payload is an empty object
 `{}`.
 
-If the fourth pump has ID `4`, it is turned on without a speed:
+If the fourth pump has ID `4`, it is turned off with:
 
 ```text
 mosquitto_pub -h mqtt.example.com \
   -t gecko/cmd/flow/4/set \
-  -m '{"action":"on"}'
-```
-
-In Windows PowerShell, run the command on one line because `\` is not a
-line-continuation character there:
-
-```powershell
-mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/4/set -m '{"action":"on"}'
-```
-
-A `speed` value only works on a pump that reports `speed_config` in its
-`gecko/status/zone/flow/4` payload. Add `-m '{"action":"on","speed":50}'` to the
-command above only in that case.
-
-The bridge publishes the response to:
-
-```text
-gecko/cmd/flow/4/result
-```
-
-To observe the ack at the same time:
-
-```text
-mosquitto_sub -h mqtt.example.com -t 'gecko/cmd/flow/4/result' -v
-```
-
-A successful result looks like this, for example:
-
-```json
-{
-  "success": true,
-  "message": "Flow command applied",
-  "zone_id": "4"
-}
+  -m '{"action":"off"}'
 ```
 
 A successful `result` ack means that the desired state has been passed to the
@@ -573,36 +540,14 @@ status topic, because the pool controller may reject a desired state or execute
 it differently due to an automatic initiator such as `FI`
 or `CD`.
 
-After switching it on, check the actual status:
+After switching it off, check the actual status:
 
 ```text
 mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/4' -v
 ```
 
-Example status with a run reason:
-
-```json
-{
-  "id": "4",
-  "name": "Pump 4",
-  "type": "flow",
-  "state": {
-    "active": true,
-    "speed": 100,
-    "initiators": ["UD"],
-    "initiator_labels": ["user_demand"],
-    "capabilities": ["supports_turn_off", "supports_turn_on"],
-    "supports_speed_percentage": false,
-    "supports_turn_on": true,
-    "supports_turn_off": true,
-    "speed_config": null,
-    "presets": []
-  }
-}
-```
-
 If the pump is running as part of an automatic cycle, the following values may
-appear instead, for example:
+appear in the status instead, for example:
 
 ```json
 {
@@ -618,40 +563,10 @@ appear instead, for example:
 }
 ```
 
-A pump is switched off with:
-
-```text
-mosquitto_pub -h mqtt.example.com \
-  -t gecko/cmd/flow/4/set \
-  -m '{"action":"off"}'
-```
-
 The Gecko client may reject the shutdown if the pump is currently activated not
 by a user request but, for example, by `FI` (`filtration`) or `CD` (`cooldown`).
 In this case, the result topic contains `success: false` and the controller's
 reason.
-
-Turn on flow without specifying a speed:
-
-```json
-{"action":"on"}
-```
-
-Turn off flow:
-
-```json
-{"action":"off"}
-```
-
-The color channels and `intensity` each range from `0` to `255`. `action` must
-be `on` or `off`. Invalid payloads produce an error ack and do not stop the
-service.
-
-Example of a successful ack:
-
-```json
-{"success":true,"message":"Target temperature set to 28.0","zone_id":"zone-1"}
-```
 
 ## External Heat Pumps
 
