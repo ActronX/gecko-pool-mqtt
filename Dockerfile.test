@@ -6,6 +6,8 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 COPY app ./app
 COPY tests ./tests
 COPY pytest.ini ./
+# Deployment-Dateien werden von tests/test_deployment.py geprüft.
+COPY docker-compose.yml ./
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
