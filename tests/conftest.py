@@ -14,7 +14,7 @@ import asyncio
 import os
 import socket
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import pytest
 from gecko_iot_client import ZoneType
@@ -133,6 +133,7 @@ class HeatPumpHarness:
     authenticated: bool = True
     loop: asyncio.AbstractEventLoop | None = None
     extras: list[Any] = field(default_factory=list)
+    wait_until_connected: Callable[[], Awaitable[None]] | None = None
 
     async def on(self, **payload: Any) -> None:
         """Runs an ``action: on`` command."""
@@ -161,6 +162,24 @@ class HeatPumpHarness:
         for _ in range(cycles):
             await asyncio.sleep(settings.heat_pump_check_interval * 2)
 
+    def restart(self) -> None:
+        """Simulates a process restart on the same fakes.
+
+        The previous controller is dropped the way a crash drops it: its
+        watchdog task is cancelled, but ``stop()`` never runs, so no
+        ``deactivate()`` reaches the fake zone. The zone therefore keeps
+        reporting ``active: True`` with the initiator it had before the crash,
+        exactly as it does in the cloud after an abrupt process death.
+        """
+        self.controller._cancel_watchdog()
+        self.controller = HeatPumpController(
+            self.loop,
+            self.mqtt,
+            lambda: self.client,
+            lambda: self.authenticated,
+            self.wait_until_connected,  # type: ignore[arg-type]
+        )
+
 
 @pytest.fixture
 async def heat_pump(isolated_settings) -> HeatPumpHarness:
@@ -182,6 +201,7 @@ async def heat_pump(isolated_settings) -> HeatPumpHarness:
     async def wait_until_connected() -> None:
         harness.wait_connected_calls += 1
 
+    harness.wait_until_connected = wait_until_connected
     controller = HeatPumpController(
         loop,
         mqtt,
@@ -195,7 +215,8 @@ async def heat_pump(isolated_settings) -> HeatPumpHarness:
 
     yield harness
 
-    await controller.stop()
+    # `harness.controller` may have been replaced by `restart()`.
+    await harness.controller.stop()
 
 
 @pytest.fixture

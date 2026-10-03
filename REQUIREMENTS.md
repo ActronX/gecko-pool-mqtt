@@ -69,7 +69,7 @@ run_tests.bat check
 
 | Scope | Result |
 |---|---|
-| Unit tests | 368 passed |
+| Unit tests | 378 passed |
 | Integration tests against mosquitto | 9 passed |
 | Gecko IoT cloud | not contacted; all Gecko calls use fakes |
 | Library contract | 35 checks against installed 1.0.3 |
@@ -237,6 +237,7 @@ Quellen: `app/heat_pump_controller.py`, normativ beschrieben in
 | R-HP-21 | The watchdog publishes the retained state exactly once per cycle with `armed`, `max_errors`, and `remaining_seconds`. A cycle that publishes the state itself suppresses the end-of-cycle publication. Without a Gecko connection, it publishes `disconnected`. The published `state` never contradicts `armed` or `remaining_seconds`: `disarmed` appears only with `armed: false` and `remaining_seconds: null`; `waiting_confirmation`, `running`, and `disconnected` appear only with `armed: true` and remaining runtime. While `activate()` blocks and confirmation has not arrived, the watchdog publishes `waiting_confirmation`, not the previous command's state name. | TC-HP-21-01 bis TC-HP-21-05, TC-HP-01-16 |
 | R-HP-22 | Reassert and error payloads carry the current initiator codes. | TC-HP-22-01 bis TC-HP-22-03 |
 | R-HP-23 | If the Gecko IoT cloud connection is disconnected or the client is missing, the watchdog treats this as an error: it increments the error count, publishes a reassert event with `reason: gecko disconnected` and `activate_called: false`, and reports `disconnected`. It counts at most once per `GECKO_HEAT_PUMP_CHECK_INTERVAL`, in practice once per offline cycle, while `disconnected` appears every cycle. The zone is **not** activated and `armed` remains `true`. These errors count toward `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` and can trigger the emergency stop; with `0`, no emergency stop occurs. Only the watchdog counts, not the zone update, which exits early when disconnected. Reconnecting alone does **not** reset the count; confirmation, `off`, or a new `on` does. | TC-HP-23-01 bis TC-HP-23-10 |
+| R-HP-24 | A restart discards a running heat-pump request. The new process comes up `disarmed` with `armed: false` and `remaining_seconds: null`, and no watchdog runs. An initiator left set in the cloud is not reactivated: zone updates are ignored while `armed` is false, so no reassert follows. The next `action: on` re-arms the request and activates the zone again if it is no longer active. | TC-HP-24-01, TC-HP-24-02 |
 
 ### Limits of the Activity Check
 
@@ -270,10 +271,10 @@ Quellen: `app/main.py`, `docker-compose.yml`, `app/config.py`.
 
 | ID | Requirement | Test Cases |
 |---|---|---|
-| R-OPS-01 | SIGINT and SIGTERM trigger an orderly shutdown. | TC-MAN-02 |
+| R-OPS-01 | SIGINT and SIGTERM trigger an orderly shutdown. | TC-OPS-01-01, TC-MAN-02 |
 | R-OPS-02 | During shutdown, `controller.stop()` is called first, followed by `bridge.stop()`. | TC-OPS-02-01 |
 | R-OPS-03 | Retained `offline` is confirmed before `disconnect()` and is then readable by new subscribers. | TC-INT-05-01, TC-INT-06-01, TC-INT-06-02 |
-| R-OPS-04 | `restart: unless-stopped` restarts the container after an error. | TC-MAN-02 |
+| R-OPS-04 | `restart: unless-stopped` restarts the container after an error. | TC-OPS-04-01, TC-MAN-02 |
 | R-OPS-05 | Configuration errors are advisory: `settings.validate()` is logged, but the service starts anyway. | TC-CFG-04-01, TC-MAN-06 |
 
 ## Manual Test Cases
@@ -285,7 +286,7 @@ and cannot be automated. The procedure is described in the README section
 | ID | Requirement | Verification |
 |---|---|---|
 | TC-MAN-01 | R-THR-04 | A real five-second PUBACK block; the event loop remains responsive and the watchdog continues publishing. |
-| TC-MAN-02 | R-OPS-01, R-OPS-04 | `docker compose stop` performs an orderly shutdown with retained `offline`; a crash triggers a restart. |
+| TC-MAN-02 | R-OPS-01, R-OPS-04 | `docker compose stop` performs an orderly shutdown with retained `offline`; a crash triggers a restart. Our side of both is also asserted automatically by `TC-OPS-01-01` and `TC-OPS-04-01`; what remains manual is the behavior of Docker and the broker. |
 | TC-MAN-03 | R-HP-09 | A real Gecko initiator change stops the zone and triggers the reassert. |
 | TC-MAN-04 | R-GE-02, R-HP-12 | Watchdog behavior during a prolonged Gecko outage until the emergency stop. |
 | TC-MAN-05 | R-OA-09 | A real refresh after an access token expires. |
@@ -303,6 +304,7 @@ and cannot be automated. The procedure is described in the README section
 | `tests/test_gecko_api.py` | R-API |
 | `tests/test_zone_serializer.py` | R-SER |
 | `tests/test_pool_controller.py` | R-GE, R-CM, R-OPS-02 |
+| `tests/test_deployment.py` | R-OPS-01, R-OPS-04 |
 | `tests/test_library_contract.py` | Contract between `app/` and the installed library |
 | `tests/test_heat_pump_controller.py` | R-HP |
 | `tests/test_mqtt_trace.py` | R-TR |

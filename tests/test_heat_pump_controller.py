@@ -1428,3 +1428,61 @@ def test_tc_hp_19_state_timestamp_is_utc(harness: HeatPumpHarness) -> None:
     stamp = harness.controller._timestamp()
 
     assert stamp.endswith("+00:00")
+
+
+# --------------------------------------------------------------------------
+# R-HP-24 Restart
+# --------------------------------------------------------------------------
+
+
+async def test_tc_hp_24_01_restart_discards_the_request_without_reactivating(
+    harness: HeatPumpHarness,
+) -> None:
+    """R-HP-24: A restart discards the request and leaves the zone alone.
+
+    The crash does not reach Gecko, so the zone keeps running with the
+    initiator it had. The new controller nevertheless comes up disarmed and
+    ignores zone updates, which is why no reassert follows.
+    """
+    await harness.on(duration=30)
+    harness.zone_update(active=True)
+
+    assert harness.controller._armed is True
+    assert harness.zone.count("activate") == 1
+
+    harness.restart()
+    await asyncio.sleep(0)
+
+    assert harness.controller._armed is False
+    assert harness.controller._until_monotonic is None
+    assert harness.mqtt.state_messages()[-1] == "disarmed"
+
+    harness.zone_update(active=False)
+    harness.zone_update(active=True)
+    await harness.settle(3)
+
+    assert harness.zone.count("activate") == 1, "The restart reactivated the zone"
+    assert harness.controller._armed is False
+    assert harness.mqtt.state_messages()[-1] == "disarmed"
+    assert harness.mqtt.reassert_reasons() == []
+
+
+async def test_tc_hp_24_02_next_on_rearms_after_restart(harness: HeatPumpHarness) -> None:
+    """R-HP-24: The next `on` after a restart tries again.
+
+    The zone is inactive by then, so the retried request activates it a second
+    time.
+    """
+    await harness.on(duration=30)
+    harness.zone_update(active=True)
+    harness.restart()
+    await asyncio.sleep(0)
+    harness.zone.active = False
+    assert harness.controller._armed is False
+
+    await harness.on(duration=30)
+
+    assert harness.controller._armed is True
+    assert harness.zone.count("activate") == 2
+    assert harness.mqtt.state_messages()[-1] == "waiting_confirmation"
+

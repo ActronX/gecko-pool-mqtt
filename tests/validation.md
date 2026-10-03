@@ -106,7 +106,7 @@ the Vessel is not yet.
 
 ### Status
 
-368 unit tests and 9 integration tests pass. The
+378 unit tests and 9 integration tests pass. The
 `gecko-iot-client` library is not tested for its behavior, but it is tested
 against the contract that `app/` has with it.
 
@@ -150,9 +150,10 @@ to a small value, for example `2`, and keep
 | Reassert | stop the pump manually via the Gecko app or a filter cycle | `status/heatPump/reassert` with `reason: zone became inactive`; then back to `running` |
 | Expiration | choose `duration` short enough and wait | `status/heatPump/state` with `state: disarmed_expired`, `armed: false`, `remaining_seconds: null`; flow zone is inactive |
 | Emergency stop | disconnect the Gecko connection until `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` is reached | `status/heatPump/reassert` with `reason: gecko disconnected`, followed once by `status/heatPump/error` with `error: emergency_stop`; **no** `deactivate()` on Gecko. The retained state then shows `state: error` with `armed: false` |
-| Re-arm | `status/heatPump/error` was not subscribed: `gecko/status/heatPump/state` shows `state: error` with `armed: false` after the emergency stop; then `{"action":"on"}` | New cycle, `error_count` starts again at `0`, state changes to `waiting_confirmation` |
+| Re-arm | `status/heatPump/error` was not subscribed: `gecko/status/heatPump/state` shows `state: error` with `armed: false` after the emergency stop; then `{"action":"on"}` | New cycle, `error_count` starts again at `0`, state changes to `waiting_confirmation`. **A restart is not the remedy here:** the process stays up after an emergency stop, and a new process also starts `disarmed`, so only `on` restores the request |
 | Off | `{"action":"off"}` | `state: disarmed`, `armed: false`; flow zone is inactive |
 | Shutdown | `docker compose stop` | `status/availability` changes retained from `online` to `offline` |
+| Crash and restart | `docker compose kill -s KILL gecko-mqtt` | Broker publishes the last will `offline`; the container restarts because of `restart: unless-stopped` and publishes `online` again. The heat-pump request is gone: `status/heatPump/state` shows `disarmed` until the next `{"action":"on"}`. Our side of this is asserted by `TC-OPS-01-01`, `TC-OPS-04-01`, `TC-HP-24-01`, and `TC-HP-24-02`; only the Docker and broker behavior is manual |
 
 Also verify that a deliberately slow blocking Gecko call does not halt the
 event loop: during `waiting_confirmation`, watchdog cycle updates and incoming
