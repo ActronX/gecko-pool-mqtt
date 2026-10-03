@@ -82,7 +82,7 @@ Local MQTT broker
 
    `4` is an example, use the ID from above. `success: true` means the desired
    state reached the Gecko connection; confirm the applied state on the retained
-   status topic, as [Example: Turn Off Pump 4](#example-turn-off-pump-4) shows.
+   status topic.
    
 ## Configuration
 
@@ -454,102 +454,95 @@ responds under the respective `result` topic with `success: false`, for example:
 }
 ```
 
-### Example: Turn Off Pump 4
+### Example: A Pump Stays On During a Filter Cycle
 
-The zone ID is not necessarily included in the display name. First list the flow
-zones:
+The zone ID is not necessarily part of the display name, so look up the flow
+zones first:
 
 ```text
 mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/+' -v
 ```
 
-Alternatively, subscribe to the complete snapshot:
+For a complete list of all zones grouped by type see `gecko/status/zones`, shown
+under [Status](#status).
+
+If the fourth pump has the ID `4`, switch it off:
 
 ```text
-mosquitto_sub -h mqtt.example.com -t gecko/status/zones -v
+mosquitto_pub -h mqtt.example.com -t gecko/cmd/flow/4/set -m '{"action":"off"}'
 ```
 
-It groups all zones by type in one payload, shortened here to one zone per
-group:
+What happens next depends on **why** the pump is running.
+
+**It runs because you asked for it**, indicated by `UD`. The zone goes inactive:
 
 ```json
 {
-  "flow": [
-    {
-      "id": "4",
-      "name": "Pump 4",
-      "type": "flow",
-      "state": {
-        "active": true,
-        "speed": 100,
-        "initiators": ["FI"],
-        "initiator_labels": ["filtration"],
-        "capabilities": ["supports_turn_off", "supports_turn_on"],
-        "supports_speed_percentage": false,
-        "supports_turn_on": true,
-        "supports_turn_off": true,
-        "speed_config": null,
-        "presets": []
-      }
-    }
-  ],
-  "lighting": [
-    {
-      "id": "1",
-      "name": "Light 1",
-      "type": "lighting",
-      "state": {
-        "active": false,
-        "color": null,
-        "effect": null
-      }
-    }
-  ],
-  "temperature": [
-    {
-      "id": "1",
-      "name": "Water Temperature 1",
-      "type": "temperature",
-      "state": {
-        "current_temperature": 31.5,
-        "target_temperature": 15.0,
-        "status": "COOLING",
-        "eco_mode": false,
-        "min_set_point": 8,
-        "max_set_point": 40
-      }
-    }
-  ]
+  "id": "4",
+  "name": "Pump 4",
+  "type": "flow",
+  "state": {
+    "active": false,
+    "speed": 100,
+    "initiators": [],
+    "initiator_labels": [],
+    "capabilities": ["supports_turn_off", "supports_turn_on"],
+    "supports_speed_percentage": false,
+    "supports_turn_on": true,
+    "supports_turn_off": true,
+    "speed_config": null,
+    "presets": []
+  }
 }
 ```
 
-Before the library has delivered any zones, the payload is an empty object
-`{}`.
+**It runs a filter cycle**, indicated by `FI`. The pump keeps running:
 
-If the fourth pump has ID `4`, it is turned off with:
-
-```text
-mosquitto_pub -h mqtt.example.com \
-  -t gecko/cmd/flow/4/set \
-  -m '{"action":"off"}'
+```json
+{
+  "id": "4",
+  "name": "Pump 4",
+  "type": "flow",
+  "state": {
+    "active": true,
+    "speed": 100,
+    "initiators": ["FI"],
+    "initiator_labels": ["filtration"],
+    "capabilities": ["supports_turn_off", "supports_turn_on"],
+    "supports_speed_percentage": false,
+    "supports_turn_on": true,
+    "supports_turn_off": true,
+    "speed_config": null,
+    "presets": []
+  }
+}
 ```
 
-A successful `result` ack means that the desired state has been passed to the
-Gecko connection. Always also check the actually applied state on the retained
-status topic, because the pool controller may reject a desired state or execute
-it differently due to an automatic initiator such as `FI`
-or `CD`.
+A filter cycle belongs to the pool controller, not to you. A user-level off
+request cannot override an automatic cycle, so the zone stays active until the
+cycle ends and the pump stops on its own.
 
-After try switching it off, check the actual status:
+`gecko/cmd/heatPump` deliberately does the opposite and switches the zone back
+on whenever the pool controller reports it inactive, because an external heat
+pump needs that flow. See [External Heat Pumps](#external-heat-pumps).
+
+Do not rely on the ack to notice any of this.
+`gecko/cmd/flow/4/result` only reports that the desired state was handed to the
+Gecko connection:
+
+```json
+{"success":true,"message":"Flow command applied","zone_id":"4"}
+```
+
+While a filter cycle runs, that result can still report `success: true` and the
+zone still stays active, because the pool controller overrode the request. If it
+rejects the request instead, the result carries `success: false` together with
+the message the library returned. **For the pump both cases mean the same thing:
+it keeps running.** Confirm the applied state on the retained topic:
 
 ```text
 mosquitto_sub -h mqtt.example.com -t 'gecko/status/zone/flow/4' -v
 ```
-
-The Gecko client may reject the shutdown `active: true` if the pump is currently activated not
-by a user request but, for example, by `FI` (`filtration`) or `CD` (`cooldown`).
-In this case, the result topic contains `success: false` and the controller's
-reason.
 
 ## External Heat Pumps
 
