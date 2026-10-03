@@ -315,6 +315,43 @@ Flow zones contain the initiator codes supplied by Gecko in the
 readable names. This makes it especially clear whether a pump is running because
 of a filter cycle or a cooldown.
 
+| Code | Label | Meaning |
+|---|---|---|
+| `FI` | `filtration` | Filter cycle |
+| `CD` | `cooldown` | Cooldown / cooling cycle |
+| `HT` | `heating` | Heating |
+| `HTP` | `heat_pump` | Heat pump |
+| `PU` | `purge` | Flush/purge cycle |
+| `CF` | `checkflow` | Flow check |
+| `UD` | `user_demand` | Manual user demand |
+
+Example, with the fields in the order the bridge emits them:
+
+```json
+{
+  "id": "1",
+  "name": "Pump 1",
+  "type": "flow",
+  "state": {
+    "active": true,
+    "speed": 100,
+    "initiators": ["FI"],
+    "initiator_labels": ["filtration"],
+    "capabilities": ["supports_turn_off", "supports_turn_on"],
+    "supports_speed_percentage": false,
+    "supports_turn_on": true,
+    "supports_turn_off": true,
+    "speed_config": null,
+    "presets": []
+  }
+}
+```
+
+When multiple causes occur simultaneously, multiple entries are transmitted, for
+example `initiators: ["HT", "FI"]`. The codes intentionally remain in the
+payload so the values can be traced unambiguously to the Gecko app. Unknown
+codes are labeled `unknown:<code>`.
+
 The flow status also contains the hardware capabilities:
 
 ```json
@@ -354,43 +391,6 @@ This command is then valid, for example:
 ```json
 {"action":"on","speed":20}
 ```
-
-| Code | Label | Meaning |
-|---|---|---|
-| `FI` | `filtration` | Filter cycle |
-| `CD` | `cooldown` | Cooldown / cooling cycle |
-| `HT` | `heating` | Heating |
-| `HTP` | `heat_pump` | Heat pump |
-| `PU` | `purge` | Flush/purge cycle |
-| `CF` | `checkflow` | Flow check |
-| `UD` | `user_demand` | Manual user demand |
-
-Example, with the fields in the order the bridge emits them:
-
-```json
-{
-  "id": "1",
-  "name": "Pump 1",
-  "type": "flow",
-  "state": {
-    "active": true,
-    "speed": 100,
-    "initiators": ["FI"],
-    "initiator_labels": ["filtration"],
-    "capabilities": ["supports_turn_off", "supports_turn_on"],
-    "supports_speed_percentage": false,
-    "supports_turn_on": true,
-    "supports_turn_off": true,
-    "speed_config": null,
-    "presets": []
-  }
-}
-```
-
-When multiple causes occur simultaneously, multiple entries are transmitted, for
-example `initiators: ["HT", "FI"]`. The codes intentionally remain in the
-payload so the values can be traced unambiguously to the Gecko app. Unknown
-codes are labeled `unknown:<code>`.
 
 ### Commands
 
