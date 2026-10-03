@@ -21,7 +21,7 @@ replaced with fakes from `tests/fakes.py`. Its package metadata, internal state
 management, and the Gecko IoT cloud it uses are outside these requirements.
 The bridge targets this version's synchronous API generation, not the
 asynchronous examples in its package description; see
-[Gecko Library and API Version](README.md#gecko-library-and-api-version).
+[Gecko Library and API Version](development.md#gecko-library-and-api-version).
 
 The Gecko IoT cloud itself is not contacted. The only integration test uses a
 local broker and a fake Gecko client.
