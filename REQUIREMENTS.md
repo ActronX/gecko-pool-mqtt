@@ -69,7 +69,7 @@ run_tests.bat check
 
 | Scope | Result |
 |---|---|
-| Unit tests | 378 passed |
+| Unit tests without test broker | 385 passed, 9 skipped |
 | Integration tests against mosquitto | 9 passed |
 | Gecko IoT cloud | not contacted; all Gecko calls use fakes |
 | Library contract | 35 checks against installed 1.0.3 |
@@ -86,6 +86,7 @@ Quelle: `app/config.py`.
 | R-CFG-04 | `validate()` reports `HEAT_PUMP_CONFIRM_TIMEOUT < HEAT_PUMP_CHECK_INTERVAL` and also reports when `HEAT_PUMP_CONFIRM_TIMEOUT` is less than the library's five-second blocking PUBACK wait. | TC-CFG-04-01 bis TC-CFG-04-03 |
 | R-CFG-05 | A valid configuration produces an empty error list. | TC-CFG-05-01 |
 | R-CFG-06 | `validate()` reports negative `MQTT_SHUTDOWN_PUBLISH_TIMEOUT`; `0` is allowed and disables waiting. | TC-CFG-06-01, TC-CFG-06-02 |
+| R-CFG-07 | `GECKO_RECOVERY_DELAY` comes from the environment, defaults to `120.0` seconds, and must be positive. | TC-CFG-01-01, TC-CFG-01-02, TC-CFG-07-01 |
 | R-CFG-08 | `MQTT_TRACE_DIR` and `MQTT_TRACE_RETENTION_DAYS` come from the environment; the defaults are `/tmp/mqtt` and `7`. Empty or `off` disables the trace, `0` means unlimited retention and is valid. A relative path and negative retention are reported. | TC-CFG-08-01 bis TC-CFG-08-05 |
 
 ## R-MQ Bridge, Topics, and Publishing
@@ -188,8 +189,9 @@ Quelle: `app/pool_controller.py`.
 | R-GE-08 | Without a discoverable monitor ID or without vessels, startup aborts with `RuntimeError`. | TC-GE-08-01, TC-GE-08-02 |
 | R-GE-09 | `_wait_until_connected` raises immediately when the client is missing instead of reporting success. | TC-GE-09-01 |
 | R-GE-10 | `_wait_until_connected` waits at most `settings.config_timeout` and then raises with a clear message. | TC-GE-10-01, TC-GE-10-02 |
-| R-GE-11 | The bridge retry loop applies **only to the initial connection**. After the first successful `connect()`, `_connect_worker` returns and is not started again. The bridge does not handle a later connection loss. | TC-GE-11-01 |
-| R-GE-12 | The library alone handles an operational outage. The awscrt lifecycle callback triggers a reconnect chain in the `gecko-iot-client` 1.0.3 transport. The bridge must provide a `token_refresh_callback`; otherwise the transport schedules no reconnect. | TC-GE-12-01 |
+| R-GE-11 | The bridge retry worker applies **only to the initial connection**. After the first successful `connect()`, `_connect_worker` returns and is not started again; later loss is handled by the separate recovery task. | TC-GE-11-01 |
+| R-GE-12 | The library reconnect path remains the first response to an operational outage. The bridge provides `token_refresh_callback`; without it the transport schedules no reconnect. | TC-GE-12-01 |
+| R-GE-13 | An authenticated, non-reauth-required client that reports incomplete connectivity schedules one loop-owned recovery task. After `GECKO_RECOVERY_DELAY` (default 120 seconds), it rebuilds only if the same client is still not fully connected. Repeated callbacks coalesce; a self-healed, superseded, reauth-required, or stopped client is not rebuilt. Transient rebuild setup failures retry with capped exponential backoff while retaining authentication; an `OAuthAuthenticationError` marks reauthentication required. Shutdown cancels and awaits recovery before client/session teardown. | TC-GE-13-01 bis TC-GE-13-06 |
 
 ## R-CM Commands
 
@@ -347,14 +349,11 @@ seconds.
 
 ## Known Gaps
 
-- **`gecko/auth/status` does not reflect an outage.** `authenticated` is set only
-  by `_mark_connected`, which is called only by `_connect_worker`. Because this
-  thread ends after the initial connection, the value remains `authenticated`
-  during an outage even though the connection is gone. If the connection
-  recovers by itself, the auth status remains unchanged. Use
-  `gecko/status/connectivity` as the connection indicator. See R-GE-11 and R-GE-12.
-  The opposite direction is covered: an invalid `auth/response` no longer
-  downgrades a valid session to `login_required` (R-MQ-11).
+- **`gecko/auth/status` is not the transport readiness signal.** It remains
+  `authenticated` during `GECKO_RECOVERY_DELAY`, then becomes `authenticating`
+  while the replacement client starts. Use `gecko/status/connectivity` for
+  full transport, gateway, and vessel readiness. An invalid `auth/response`
+  does not downgrade a valid session to `login_required` (R-MQ-11).
 - **`bool` is accepted for lighting colors.** The check for `r`, `g`, `b`, and
   `intensity` in `_validate_command` does not reject `bool`, so `true` is taken as
   `1`. For `flow`, `bool` is explicitly rejected for `speed`. The checks are

@@ -13,10 +13,11 @@ import json
 import os
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from gecko_iot_client import ZoneType
+from gecko_iot_client import EventChannel, ZoneType
 
 from app import pool_controller as pool_controller_module
 from app.config import settings
@@ -43,6 +44,7 @@ class RecordingGeckoClient(FakeGeckoClient):
     """Gecko fake that records the calling thread."""
 
     connect_threads: list[dict[str, Any]] = []
+    instances: list["RecordingGeckoClient"] = []
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
@@ -50,6 +52,7 @@ class RecordingGeckoClient(FakeGeckoClient):
         self.idd = kwargs.get("idd")
         self.transporter = kwargs.get("transporter")
         self.config_timeout = kwargs.get("config_timeout")
+        type(self).instances.append(self)
 
     def connect(self) -> None:
         thread = threading.current_thread()
@@ -90,6 +93,7 @@ class FakeApi:
 def library(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Replaces the library and sidecar with fakes."""
     RecordingGeckoClient.connect_threads = []
+    RecordingGeckoClient.instances = []
     FakeApi.vessels = [{"vesselId": "1", "monitorId": "mon-1", "name": "Pool"}]
     monkeypatch.setattr(pool_controller_module, "GeckoIotClient", RecordingGeckoClient)
     monkeypatch.setattr(pool_controller_module, "MqttTransporter", lambda **kwargs: object())
@@ -328,7 +332,7 @@ async def test_tc_ge_08_without_vessels_raises(pool: PoolHarness, library) -> No
 async def test_tc_ge_11_worker_is_not_restarted_after_success(pool: PoolHarness, library) -> None:
     """R-GE-11: After the first connection, the retry thread ends permanently.
 
-    The bridge does not handle a later connection loss; the library transporter does.
+    Later connection loss is handled by the controller's separate recovery task.
     """
     pool.controller.oauth_flow = FakeOAuthFlow()
 
@@ -343,6 +347,144 @@ async def test_tc_ge_11_worker_is_not_restarted_after_success(pool: PoolHarness,
     await pool.controller.start_gecko_client()
 
     assert pool.controller._connect_thread is not first_thread
+
+
+# --------------------------------------------------------------------------
+# R-GE-13 Transport recovery
+# --------------------------------------------------------------------------
+
+
+def incomplete_connectivity() -> SimpleNamespace:
+    return SimpleNamespace(to_dict=lambda: {"is_fully_connected": False})
+
+
+async def test_tc_ge_13_incomplete_transport_rebuilds_once(pool: PoolHarness, library) -> None:
+    """R-GE-13: A persistent incomplete transport rebuilds the Gecko client."""
+    pool.controller.oauth_flow = FakeOAuthFlow()
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+    stale_client = pool.controller.client
+    assert stale_client is not None
+    stale_client.is_connected = False
+
+    stale_client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    stale_client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    await asyncio.sleep(0)
+
+    recovery_task = pool.controller._recovery_task
+    assert recovery_task is not None
+    await asyncio.sleep(0.05)
+
+    assert pool.controller.client is not stale_client
+    assert stale_client.disconnected_count() == 1
+    assert len(RecordingGeckoClient.instances) == 2
+    assert pool.controller._recovery_task is None
+
+
+async def test_tc_ge_13_recovered_transport_skips_rebuild(pool: PoolHarness, library) -> None:
+    """R-GE-13: A self-healed transport does not cause an unnecessary rebuild."""
+    pool.controller.oauth_flow = FakeOAuthFlow()
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+    client = pool.controller.client
+    assert client is not None
+    client.is_connected = False
+
+    client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    await asyncio.sleep(0)
+    client.is_connected = True
+    await asyncio.sleep(0.05)
+
+    assert pool.controller.client is client
+    assert len(RecordingGeckoClient.instances) == 1
+    assert pool.controller._recovery_task is None
+
+
+async def test_tc_ge_13_superseding_start_cancels_recovery(pool: PoolHarness, library) -> None:
+    """R-GE-13: A newer client start replaces the pending recovery task."""
+    pool.controller.oauth_flow = FakeOAuthFlow()
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+    client = pool.controller.client
+    assert client is not None
+    client.is_connected = False
+
+    client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    await asyncio.sleep(0)
+    assert pool.controller._recovery_task is not None
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+
+    assert len(RecordingGeckoClient.instances) == 2
+    assert pool.controller._recovery_task is None
+
+
+async def test_tc_ge_13_transient_rebuild_failure_retries(pool: PoolHarness, library) -> None:
+    """R-GE-13: Rebuild setup failures retry without requesting login."""
+    pool.controller.oauth_flow = FakeOAuthFlow()
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+    client = pool.controller.client
+    assert client is not None
+    client.is_connected = False
+    original_start = pool.controller.start_gecko_client
+    attempts = 0
+
+    async def flaky_start() -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("Gecko API temporarily unavailable")
+        return await original_start()
+
+    pool.controller.start_gecko_client = flaky_start  # type: ignore[method-assign]
+    client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    await asyncio.sleep(0.1)
+
+    assert attempts == 2
+    assert pool.controller.authenticated is True
+    assert pool.controller.reauth_required is False
+    assert not any(status["status"] == "login_required" for status in pool.mqtt.auth_status)
+
+
+async def test_tc_ge_13_oauth_failure_requires_reauthentication(pool: PoolHarness, library) -> None:
+    """R-GE-13: An authentication failure during rebuild requires a new login."""
+    pool.controller.oauth_flow = FakeOAuthFlow()
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+    client = pool.controller.client
+    assert client is not None
+    client.is_connected = False
+
+    async def failing_start() -> bool:
+        raise OAuthAuthenticationError("refresh rejected", 401)
+
+    pool.controller.start_gecko_client = failing_start  # type: ignore[method-assign]
+    client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    await asyncio.sleep(0.05)
+
+    assert pool.controller.reauth_required is True
+    assert pool.controller.authenticated is False
+    assert client.disconnected_count() == 1
+    assert pool.mqtt.challenges
+
+
+async def test_tc_ge_13_stop_cancels_pending_recovery(pool: PoolHarness, library) -> None:
+    """R-GE-13: Shutdown prevents a delayed recovery from recreating a client."""
+    pool.controller.oauth_flow = FakeOAuthFlow()
+    await pool.controller.start_gecko_client()
+    await asyncio.sleep(0.05)
+    client = pool.controller.client
+    assert client is not None
+    client.is_connected = False
+
+    client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
+    await asyncio.sleep(0)
+    await pool.controller.stop()
+    await asyncio.sleep(0.05)
+
+    assert len(RecordingGeckoClient.instances) == 1
+    assert pool.controller._recovery_task is None
 
 
 async def test_tc_ge_12_transporter_gets_a_token_refresh_callback(

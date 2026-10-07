@@ -37,6 +37,7 @@ class Settings:
     monitor_id: str = field(default_factory=lambda: os.getenv("GECKO_MONITOR_ID", ""))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     config_timeout: float = field(default_factory=lambda: float(os.getenv("GECKO_CONFIG_TIMEOUT", "30.0")))
+    gecko_recovery_delay: float = field(default_factory=lambda: float(os.getenv("GECKO_RECOVERY_DELAY", "120.0")))
     heat_pump_flow_zone_id: str = field(default_factory=lambda: os.getenv("GECKO_HEAT_PUMP_FLOW_ZONE_ID", "4"))
     heat_pump_default_duration: int = field(default_factory=lambda: int(os.getenv("GECKO_HEAT_PUMP_DEFAULT_DURATION", "30")))
     heat_pump_max_reassert_attempts: int = field(default_factory=lambda: int(os.getenv("GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS", "2")))
@@ -63,6 +64,8 @@ class Settings:
             errors.append("GECKO_OAUTH2_CLIENT_ID is required")
         if not self.mqtt_host:
             errors.append("MQTT_HOST is required")
+        if self.gecko_recovery_delay <= 0:
+            errors.append("GECKO_RECOVERY_DELAY must be positive")
         if self.mqtt_shutdown_publish_timeout < 0:
             errors.append("MQTT_SHUTDOWN_PUBLISH_TIMEOUT must be zero or positive")
         if self.mqtt_trace_dir.strip() and self.mqtt_trace_dir.strip().lower() != "off" and not os.path.isabs(self.mqtt_trace_dir):

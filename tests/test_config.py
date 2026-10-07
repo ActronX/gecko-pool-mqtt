@@ -18,6 +18,7 @@ ENV_KEYS = (
     "GECKO_MONITOR_ID",
     "LOG_LEVEL",
     "GECKO_CONFIG_TIMEOUT",
+    "GECKO_RECOVERY_DELAY",
     "GECKO_HEAT_PUMP_FLOW_ZONE_ID",
     "GECKO_HEAT_PUMP_DEFAULT_DURATION",
     "GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS",
@@ -57,6 +58,7 @@ def test_tc_cfg_01_defaults_without_environment(env) -> None:
     assert config.mqtt_client_id == "gecko-pool-mqtt"
     assert config.mqtt_shutdown_publish_timeout == 2.0
     assert config.config_timeout == 30.0
+    assert config.gecko_recovery_delay == 120.0
     assert config.heat_pump_flow_zone_id == "4"
     assert config.heat_pump_default_duration == 30
     assert config.heat_pump_max_reassert_attempts == 2
@@ -75,6 +77,7 @@ def test_tc_cfg_01_values_are_read_from_environment(env) -> None:
         GECKO_HEAT_PUMP_FLOW_ZONE_ID="9",
         GECKO_HEAT_PUMP_CONFIRM_TIMEOUT="42.5",
         OAUTH_TOKEN_FILE="/tmp/t.json",
+        GECKO_RECOVERY_DELAY="180.0",
     )
 
     assert config.mqtt_base_topic == "pool"
@@ -82,6 +85,7 @@ def test_tc_cfg_01_values_are_read_from_environment(env) -> None:
     assert config.heat_pump_flow_zone_id == "9"
     assert config.heat_pump_confirm_timeout == 42.5
     assert config.oauth_token_file == "/tmp/t.json"
+    assert config.gecko_recovery_delay == 180.0
 
 
 def test_tc_cfg_02_missing_oauth_client_id_is_reported(env) -> None:
@@ -152,6 +156,13 @@ def test_tc_cfg_04_confirm_timeout_exactly_the_block_is_valid(env) -> None:
 def test_tc_cfg_05_valid_configuration_has_no_errors(env) -> None:
     """R-CFG-05: A valid configuration reports no errors."""
     assert build(env).validate() == []
+
+
+def test_tc_cfg_07_non_positive_recovery_delay_is_reported(env) -> None:
+    """R-CFG-07: Gecko transport recovery delay must be positive."""
+    errors = build(env, GECKO_RECOVERY_DELAY=0).validate()
+
+    assert "GECKO_RECOVERY_DELAY must be positive" in errors
 
 
 def test_tc_cfg_06_negative_shutdown_publish_timeout_is_reported(env) -> None:

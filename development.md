@@ -157,11 +157,10 @@ attempt). The loop continues indefinitely.
 This applies **only to the initial connection**. Once `connect()` has succeeded
 once, the thread returns and is not restarted.
 
-### Runtime Failure: Library Reconnect
+### Runtime Failure: Library Reconnect and Bridge Recovery
 
-The bridge is not responsible for a later connection loss. The library detects
-the loss through an awscrt lifecycle callback and
-reconnects automatically:
+The library detects a later connection loss through an awscrt lifecycle callback
+and first attempts reconnecting automatically:
 
 ```text
 on_lifecycle_disconnection
@@ -177,15 +176,28 @@ token has already expired when the disconnect occurs, the token is renewed
 before reconnecting anyway so that the new broker URL is valid.
 
 This requires a configured `token_refresh_callback`, which the bridge supplies.
-The connection therefore recovers on its own; a container restart is not
-necessary. `restart: unless-stopped` only applies after a process crash.
+
+The bridge additionally treats an incomplete `CONNECTIVITY_UPDATE` as a
+fallback signal. It schedules exactly one recovery task on the asyncio loop and
+waits `GECKO_RECOVERY_DELAY` seconds, **120 seconds by default**, before doing
+anything. This delay deliberately gives the library reconnect chain time to
+self-heal. The bridge only rebuilds when `client.is_connected` is still false;
+that check requires full MQTT transport, gateway, and vessel readiness.
+
+The rebuild disconnects the stale client, obtains a fresh broker URL, creates a
+new transporter and `GeckoIotClient`, and starts the normal initial connection
+worker. Transient setup failures retry with exponential backoff capped at five
+minutes. Only an OAuth authentication error changes the session to
+`reauth_required`; other failures retain the session and do not publish
+`login_required`. Recovery is cancelled during shutdown, reauthentication, or
+when a newer client supersedes the affected one.
 
 ### Two Details to Consider When Analyzing
 
-**`gecko/auth/status` does not reflect an outage.** It remains `authenticated`
-throughout the outage because the value is set only when `_connect_worker`
-succeeds, and that worker has long since finished. The connection recovers on
-its own, but the bridge's auth status does not report it.
+**`gecko/auth/status` is not the transport readiness signal.** It remains
+`authenticated` during the recovery delay, and changes to `authenticating` once
+a replacement client is being built. A successful replacement returns it to
+`authenticated`. Use connectivity for operational readiness.
 As a signal for "connected", use `gecko/status/connectivity`, which the library
 updates correctly on the first connection loss.
 

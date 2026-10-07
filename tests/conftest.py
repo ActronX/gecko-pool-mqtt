@@ -69,6 +69,7 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Any:
     # instead of the test's temporary directory.
     monkeypatch.setattr(settings, "mqtt_trace_dir", str(tmp_path / "mqtt-trace"))
     monkeypatch.setattr(settings, "config_timeout", 0.05)
+    monkeypatch.setattr(settings, "gecko_recovery_delay", 0.01)
     return settings
 
 

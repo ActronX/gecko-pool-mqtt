@@ -106,7 +106,9 @@ the Vessel is not yet.
 
 ### Status
 
-378 unit tests and 9 integration tests pass. The
+Without the test broker, 385 unit tests pass and 9 integration tests are
+skipped. With the broker started through `run_tests.bat integration`, all 9
+integration tests pass. The
 `gecko-iot-client` library is not tested for its behavior, but it is tested
 against the contract that `app/` has with it.
 
@@ -120,6 +122,21 @@ Observe all topics during the test:
 ```text
 mosquitto_sub -h mqtt.example.com -t "gecko/#" -v
 ```
+
+### Gecko Transport Recovery
+
+Set `GECKO_RECOVERY_DELAY=120.0` unless a different operational recovery window
+is required. After a `status/connectivity` payload reports
+`is_fully_connected: false`, the bridge leaves the library reconnect mechanism
+alone for this period. If full readiness has not returned, it rebuilds the Gecko
+client with a fresh broker URL. During that window, control commands retain
+their normal disconnected failure behavior and are not queued or replayed.
+
+To verify this against a real Gecko, observe `gecko/status/connectivity` and
+`gecko/auth/status`, induce a persistent transport loss for longer than the
+configured delay, and confirm that the client returns to full connectivity
+without an OAuth challenge. A 401 or 403 must instead produce
+`reauth_required` and the normal OAuth challenge.
 
 If you do not want to run a second client, use the
 [MQTT trace](../README.md#mqtt-trace): It contains outgoing and

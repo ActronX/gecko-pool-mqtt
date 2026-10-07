@@ -110,6 +110,7 @@ Important settings in `.env`:
 | `GECKO_ACCOUNT_ID` | empty | Optional: skip account discovery |
 | `GECKO_MONITOR_ID` | empty | Optional: force vessel selection |
 | `GECKO_CONFIG_TIMEOUT` | `30.0` | Timeout for the Gecko configuration |
+| `GECKO_RECOVERY_DELAY` | `120.0` | Seconds an incomplete Gecko transport must persist before the bridge rebuilds its client; short library reconnects are left alone |
 | `GECKO_HEAT_PUMP_FLOW_ZONE_ID` | `4` | Flow zone ID of the pump used for external heat pumps |
 | `GECKO_HEAT_PUMP_DEFAULT_DURATION` | `30` | Default runtime of the heat-pump request in minutes |
 | `GECKO_HEAT_PUMP_MAX_REASSERT_ATTEMPTS` | `2` | Maximum failed reassert attempts before the emergency stop; `0` = unlimited |
@@ -133,6 +134,8 @@ override the variable in `.env`.
 
 `app/main.py` calls `settings.validate()`, logs any errors found, and then
 starts the service **anyway**. Validation is therefore advisory, not enforced.
+`GECKO_RECOVERY_DELAY` must be positive; the default `120.0` deliberately gives
+the Gecko library two minutes to reconnect before the bridge rebuilds its client.
 Specific consequence for heat pump timings:
 
 - If `GECKO_HEAT_PUMP_CONFIRM_TIMEOUT` is smaller than
@@ -958,4 +961,3 @@ The requirements and the test cases that refer to them live in
 
 Dependencies, local development, thread boundaries, and connection handling are
 documented in [`development.md`](development.md).
-
