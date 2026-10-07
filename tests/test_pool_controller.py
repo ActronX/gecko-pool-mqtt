@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import ast
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -21,6 +22,7 @@ from gecko_iot_client import EventChannel, ZoneType
 
 from app import pool_controller as pool_controller_module
 from app.config import settings
+from app.gecko_recovery_logging import redact_error
 from app.oauth_flow import OAuthAuthenticationError
 from app.pool_controller import PoolController
 
@@ -109,6 +111,16 @@ def write_token_file() -> None:
         )
 
 
+def test_gecko_recovery_error_redacts_broker_url() -> None:
+    error = RuntimeError("failed at mqtts://user:secret@broker.example/mqtt?token=abc")
+
+    message = redact_error(error)
+
+    assert "broker.example" not in message
+    assert "secret" not in message
+    assert message == "failed at <redacted-url>"
+
+
 # --------------------------------------------------------------------------
 # R-GE-01, R-GE-03 Connection setup in a thread
 # --------------------------------------------------------------------------
@@ -124,6 +136,16 @@ async def test_tc_ge_01_connect_runs_in_daemon_thread(pool: PoolHarness, library
     record = RecordingGeckoClient.connect_threads[0]
     assert record["daemon"] is True
     assert record["is_main_thread"] is False
+
+
+async def test_tc_ge_01_initial_start_has_no_recovery_transition(
+    pool: PoolHarness, library, caplog: pytest.LogCaptureFixture
+) -> None:
+    pool.controller.oauth_flow = FakeOAuthFlow()
+
+    await pool.controller.start_gecko_client()
+
+    assert "Gecko recovery state transition" not in caplog.text
 
 
 async def test_tc_ge_03_successful_connect_marks_authenticated(pool: PoolHarness, library) -> None:
@@ -171,7 +193,9 @@ class BackoffStopEvent:
         return None
 
 
-async def test_tc_ge_02_connect_failures_back_off_exponentially(pool: PoolHarness) -> None:
+async def test_tc_ge_02_connect_failures_back_off_exponentially(
+    pool: PoolHarness, caplog: pytest.LogCaptureFixture
+) -> None:
     """R-GE-02: Connection failures produce 5s, 10s, and 20s backoff."""
     client = FakeGeckoClient(connected=False)
     client.connect = lambda: (_ for _ in ()).throw(RuntimeError("no network"))  # type: ignore[method-assign]
@@ -186,6 +210,8 @@ async def test_tc_ge_02_connect_failures_back_off_exponentially(pool: PoolHarnes
     assert stop_event.waits == [5.0, 10.0, 20.0]
     assert client.calls.count("disconnect") == 3
     assert pool.controller.authenticated is False
+    assert "Gecko recovery connect failed generation=1 attempt=1" in caplog.text
+    assert "retrying in 5s" in caplog.text
 
 
 async def test_tc_ge_02_stale_generation_stops_worker(pool: PoolHarness) -> None:
@@ -358,7 +384,9 @@ def incomplete_connectivity() -> SimpleNamespace:
     return SimpleNamespace(to_dict=lambda: {"is_fully_connected": False})
 
 
-async def test_tc_ge_13_incomplete_transport_rebuilds_once(pool: PoolHarness, library) -> None:
+async def test_tc_ge_13_incomplete_transport_rebuilds_once(
+    pool: PoolHarness, library, caplog: pytest.LogCaptureFixture
+) -> None:
     """R-GE-13: A persistent incomplete transport rebuilds the Gecko client."""
     pool.controller.oauth_flow = FakeOAuthFlow()
     await pool.controller.start_gecko_client()
@@ -379,10 +407,16 @@ async def test_tc_ge_13_incomplete_transport_rebuilds_once(pool: PoolHarness, li
     assert stale_client.disconnected_count() == 1
     assert len(RecordingGeckoClient.instances) == 2
     assert pool.controller._recovery_task is None
+    assert "Gecko recovery scheduled generation=1" in caplog.text
+    assert "delay=0.01s" in caplog.text
+    assert "Gecko recovery rebuild attempt=1 generation=1" in caplog.text
 
 
-async def test_tc_ge_13_recovered_transport_skips_rebuild(pool: PoolHarness, library) -> None:
+async def test_tc_ge_13_recovered_transport_skips_rebuild(
+    pool: PoolHarness, library, caplog: pytest.LogCaptureFixture
+) -> None:
     """R-GE-13: A self-healed transport does not cause an unnecessary rebuild."""
+    caplog.set_level(logging.INFO)
     pool.controller.oauth_flow = FakeOAuthFlow()
     await pool.controller.start_gecko_client()
     await asyncio.sleep(0.05)
@@ -398,6 +432,7 @@ async def test_tc_ge_13_recovered_transport_skips_rebuild(pool: PoolHarness, lib
     assert pool.controller.client is client
     assert len(RecordingGeckoClient.instances) == 1
     assert pool.controller._recovery_task is None
+    assert "Gecko recovery aborted: transport self-healed" in caplog.text
 
 
 async def test_tc_ge_13_superseding_start_cancels_recovery(pool: PoolHarness, library) -> None:
@@ -419,7 +454,9 @@ async def test_tc_ge_13_superseding_start_cancels_recovery(pool: PoolHarness, li
     assert pool.controller._recovery_task is None
 
 
-async def test_tc_ge_13_transient_rebuild_failure_retries(pool: PoolHarness, library) -> None:
+async def test_tc_ge_13_transient_rebuild_failure_retries(
+    pool: PoolHarness, library, caplog: pytest.LogCaptureFixture
+) -> None:
     """R-GE-13: Rebuild setup failures retry without requesting login."""
     pool.controller.oauth_flow = FakeOAuthFlow()
     await pool.controller.start_gecko_client()
@@ -430,12 +467,12 @@ async def test_tc_ge_13_transient_rebuild_failure_retries(pool: PoolHarness, lib
     original_start = pool.controller.start_gecko_client
     attempts = 0
 
-    async def flaky_start() -> bool:
+    async def flaky_start(recovery: bool = False) -> bool:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise RuntimeError("Gecko API temporarily unavailable")
-        return await original_start()
+        return await original_start(recovery=recovery)
 
     pool.controller.start_gecko_client = flaky_start  # type: ignore[method-assign]
     client.emit(EventChannel.CONNECTIVITY_UPDATE, incomplete_connectivity())
@@ -445,9 +482,13 @@ async def test_tc_ge_13_transient_rebuild_failure_retries(pool: PoolHarness, lib
     assert pool.controller.authenticated is True
     assert pool.controller.reauth_required is False
     assert not any(status["status"] == "login_required" for status in pool.mqtt.auth_status)
+    assert "Gecko recovery rebuild failed attempt=1" in caplog.text
+    assert "next attempt in 0.02s" in caplog.text
 
 
-async def test_tc_ge_13_oauth_failure_requires_reauthentication(pool: PoolHarness, library) -> None:
+async def test_tc_ge_13_oauth_failure_requires_reauthentication(
+    pool: PoolHarness, library, caplog: pytest.LogCaptureFixture
+) -> None:
     """R-GE-13: An authentication failure during rebuild requires a new login."""
     pool.controller.oauth_flow = FakeOAuthFlow()
     await pool.controller.start_gecko_client()
@@ -456,7 +497,7 @@ async def test_tc_ge_13_oauth_failure_requires_reauthentication(pool: PoolHarnes
     assert client is not None
     client.is_connected = False
 
-    async def failing_start() -> bool:
+    async def failing_start(recovery: bool = False) -> bool:
         raise OAuthAuthenticationError("refresh rejected", 401)
 
     pool.controller.start_gecko_client = failing_start  # type: ignore[method-assign]
@@ -467,10 +508,14 @@ async def test_tc_ge_13_oauth_failure_requires_reauthentication(pool: PoolHarnes
     assert pool.controller.authenticated is False
     assert client.disconnected_count() == 1
     assert pool.mqtt.challenges
+    assert "Gecko recovery aborted: reauth_required" in caplog.text
 
 
-async def test_tc_ge_13_stop_cancels_pending_recovery(pool: PoolHarness, library) -> None:
+async def test_tc_ge_13_stop_cancels_pending_recovery(
+    pool: PoolHarness, library, caplog: pytest.LogCaptureFixture
+) -> None:
     """R-GE-13: Shutdown prevents a delayed recovery from recreating a client."""
+    caplog.set_level(logging.INFO)
     pool.controller.oauth_flow = FakeOAuthFlow()
     await pool.controller.start_gecko_client()
     await asyncio.sleep(0.05)
@@ -485,6 +530,7 @@ async def test_tc_ge_13_stop_cancels_pending_recovery(pool: PoolHarness, library
 
     assert len(RecordingGeckoClient.instances) == 1
     assert pool.controller._recovery_task is None
+    assert "Gecko recovery aborted: shutdown" in caplog.text
 
 
 async def test_tc_ge_12_transporter_gets_a_token_refresh_callback(

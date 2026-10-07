@@ -143,6 +143,12 @@ If you do not want to run a second client, use the
 incoming messages with timestamps and can be fully
 analyzed after the test.
 
+Recovery scheduling, rebuild/connect attempts, abort reasons, and backoff are
+also visible in container logs with `docker compose logs -f gecko-mqtt` (or
+`docker logs -f gecko-mqtt`). There is no separate MQTT recovery topic;
+`gecko/status/connectivity` and `gecko/auth/status` remain the operational
+status interfaces.
+
 Temperature, light, and flow:
 
 | Step | Command | Expected |

@@ -14,6 +14,7 @@ from gecko_iot_client.transporters.mqtt import MqttTransporter
 
 from .config import settings
 from .gecko_api import SidecarGeckoApi
+from .gecko_recovery_logging import recovery_logger
 from .heat_pump_controller import HeatPumpController
 from .mqtt_bridge import MqttBridge
 from .oauth_flow import OAuthAuthenticationError, OAuthFlow
@@ -70,10 +71,17 @@ class PoolController:
             await self.publish_login_challenge(str(exc))
             return False
 
-    async def start_gecko_client(self) -> bool:
+    async def start_gecko_client(self, recovery: bool = False) -> bool:
         assert self.oauth_flow is not None
         current_task = asyncio.current_task()
         if self._recovery_task is not None and self._recovery_task is not current_task:
+            recovery_logger.aborted("superseded by a new client generation")
+            recovery_logger.transition(
+                self._connect_generation,
+                "WAITING",
+                "SUPERSEDED",
+                level=logging.WARNING,
+            )
             self._recovery_task.cancel()
             self._recovery_task = None
         self._connect_generation += 1
@@ -119,7 +127,7 @@ class PoolController:
         self.mqtt.publish_auth_status({"status": "authenticating", "reason": "connecting to Gecko"})
         self._connect_thread = threading.Thread(
             target=self._connect_worker,
-            args=(self.client, generation),
+            args=(self.client, generation, recovery),
             daemon=True,
         )
         self._connect_thread.start()
@@ -127,17 +135,20 @@ class PoolController:
         self.loop.call_soon(self._publish_snapshot_safe)
         return True
 
-    def _connect_worker(self, client: GeckoIotClient, generation: int) -> None:
+    def _connect_worker(self, client: GeckoIotClient, generation: int, recovery: bool = False) -> None:
         delay = 5.0
+        attempt = 1
         while not self._stop_event.is_set() and generation == self._connect_generation:
             try:
                 client.connect()
-                logger.info("GeckoIotClient connected successfully")
+                recovery_logger.connect_succeeded(generation)
+                if recovery:
+                    recovery_logger.transition(generation, "CONNECTING", "CONNECTED")
                 if generation == self._connect_generation and self.client is client:
                     self.loop.call_soon_threadsafe(self._mark_connected, generation)
                 return
             except Exception as exc:
-                logger.error("GeckoIotClient connect failed: %s; retrying in %.0fs", exc, delay)
+                recovery_logger.connect_failed(generation, attempt, exc, delay)
                 try:
                     client.disconnect()
                 except Exception:
@@ -145,6 +156,7 @@ class PoolController:
                 if self._stop_event.wait(delay):
                     return
                 delay = min(delay * 2, 300.0)
+                attempt += 1
 
     def _mark_connected(self, generation: int) -> None:
         if generation != self._connect_generation or self.client is None:
@@ -172,10 +184,19 @@ class PoolController:
         self.mqtt.publish_challenge(url, state)
         self.mqtt.publish_auth_status({"status": "login_required", "reason": reason})
 
-    async def _mark_reauth_required(self, error: Exception) -> None:
+    async def _mark_reauth_required(self, error: Exception, transition_logged: bool = False) -> None:
         if self.reauth_required:
             logger.debug("Reauthentication already requested: %s", self.auth_reason)
             return
+        recovery_logger.aborted("reauth_required", error=error, level=logging.WARNING)
+        if not transition_logged:
+            recovery_logger.transition(
+                self._connect_generation,
+                "CONNECTING",
+                "AUTH_REQUIRED",
+                reason=error,
+                level=logging.WARNING,
+            )
         self.authenticated = False
         self.reauth_required = True
         self.auth_reason = str(error)[:240]
@@ -242,19 +263,19 @@ class PoolController:
         """Schedule one delayed rebuild from a library callback thread."""
         def create_recovery_task() -> None:
             if self._stop_event.is_set() or self.reauth_required or not self.authenticated:
-                logger.debug("Skipping Gecko recovery: stopped, unauthenticated, or reauth required")
+                recovery_logger.aborted(
+                    "before scheduling: stopped, unauthenticated, or reauth required",
+                    level=logging.DEBUG,
+                )
                 return
             if generation != self._connect_generation or self.client is not client:
-                logger.debug("Skipping Gecko recovery for superseded client generation=%s", generation)
+                recovery_logger.aborted("before scheduling: superseded", generation, level=logging.DEBUG)
                 return
             if self._recovery_task is not None and not self._recovery_task.done():
-                logger.debug("Gecko recovery already scheduled for generation=%s", generation)
+                recovery_logger.already_scheduled(generation)
                 return
-            logger.warning(
-                "Scheduling Gecko transport recovery generation=%s connected=%s",
-                generation,
-                client.is_connected,
-            )
+            recovery_logger.scheduled(generation, client.is_connected, settings.gecko_recovery_delay)
+            recovery_logger.transition(generation, "IDLE", "SCHEDULED")
             self._recovery_task = self.loop.create_task(
                 self._recover_gecko_client(client, generation),
                 name="gecko-transport-recovery",
@@ -264,44 +285,75 @@ class PoolController:
 
     async def _recover_gecko_client(self, client: GeckoIotClient, generation: int) -> None:
         delay = settings.gecko_recovery_delay
+        attempt = 1
+        first_wait = True
         task = asyncio.current_task()
         try:
             while True:
+                if first_wait:
+                    recovery_logger.transition(generation, "SCHEDULED", "WAITING", attempt=attempt, delay=delay)
+                    first_wait = False
+                recovery_logger.waiting(generation, attempt, delay)
                 await asyncio.sleep(delay)
                 if self._stop_event.is_set():
-                    logger.debug("Skipping Gecko recovery after shutdown")
+                    recovery_logger.aborted("shutdown", generation, level=logging.DEBUG)
+                    recovery_logger.transition(generation, "WAITING", "SHUTDOWN", level=logging.INFO)
                     return
                 if self.reauth_required or not self.authenticated:
-                    logger.debug("Skipping Gecko recovery after authentication state changed")
+                    recovery_logger.aborted("authentication state changed", generation, level=logging.DEBUG)
                     return
                 if client is not None and (
                     self.client is not client or generation != self._connect_generation
                 ):
-                    logger.debug("Skipping Gecko recovery for superseded client generation=%s", generation)
+                    recovery_logger.aborted("superseded", generation, level=logging.DEBUG)
+                    recovery_logger.transition(generation, "WAITING", "SUPERSEDED", level=logging.INFO)
                     return
                 if client is not None and client.is_connected:
-                    logger.info("Skipping Gecko recovery; transport recovered generation=%s", generation)
+                    recovery_logger.aborted("transport self-healed", generation)
+                    recovery_logger.transition(generation, "WAITING", "SELF_HEALED")
                     return
                 try:
-                    logger.warning("Rebuilding Gecko client generation=%s", generation)
-                    await self.start_gecko_client()
-                    logger.info("Gecko client rebuild started generation=%s", self._connect_generation)
+                    recovery_logger.transition(
+                        generation,
+                        "WAITING",
+                        "REBUILDING",
+                        attempt=attempt,
+                        delay=delay,
+                    )
+                    recovery_logger.rebuild_attempt(generation, attempt)
+                    await self.start_gecko_client(recovery=True)
+                    recovery_logger.transition(self._connect_generation, "REBUILDING", "CONNECTING")
+                    recovery_logger.rebuild_succeeded(self._connect_generation)
                     return
                 except OAuthAuthenticationError as exc:
-                    await self._mark_reauth_required(exc)
+                    recovery_logger.aborted("reauth_required", generation, exc, logging.WARNING)
+                    recovery_logger.transition(
+                        generation,
+                        "REBUILDING",
+                        "AUTH_REQUIRED",
+                        reason=exc,
+                        level=logging.WARNING,
+                    )
+                    await self._mark_reauth_required(exc, transition_logged=True)
                     return
                 except Exception as exc:
                     next_delay = min(delay * 2, 300.0)
-                    logger.error(
-                        "Gecko client rebuild failed: %s; retrying in %.0fs",
-                        exc,
-                        next_delay,
-                    )
+                    recovery_logger.rebuild_failed(generation, attempt, exc, next_delay)
                     # An external start cancels this task. A failed rebuild leaves no
                     # current client, so the next attempt belongs to this task.
                     client = None
                     generation = self._connect_generation
                     delay = next_delay
+                    attempt += 1
+                    recovery_logger.transition(
+                        generation,
+                        "REBUILDING",
+                        "WAITING",
+                        attempt=attempt,
+                        delay=delay,
+                        reason=exc,
+                        level=logging.ERROR,
+                    )
         finally:
             if self._recovery_task is task:
                 self._recovery_task = None
@@ -460,9 +512,17 @@ class PoolController:
     async def stop(self) -> None:
         await self.heat_pump.stop()
         self._stop_event.set()
+        shutdown_generation = self._connect_generation
         self._connect_generation += 1
         recovery_task = self._recovery_task
         if recovery_task is not None:
+            recovery_logger.aborted("shutdown")
+            recovery_logger.transition(
+                shutdown_generation,
+                "WAITING",
+                "SHUTDOWN",
+                level=logging.INFO,
+            )
             recovery_task.cancel()
             with suppress(asyncio.CancelledError):
                 await recovery_task
